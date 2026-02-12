@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: eventaccess-backend
+    restart: always
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/eventaccess.db
+      - DEBUG=false
+      - ENVIRONMENT=production
+      - PORT=8000
+    volumes:
+      - backend-data:/app/data
+    networks:
+      - eventaccess-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: eventaccess-frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - eventaccess-network
+
+volumes:
+  backend-data:
+
+
+networks:
+  eventaccess-network:
+    driver: bridge

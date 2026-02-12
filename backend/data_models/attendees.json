@@ -1,0 +1,59 @@
+{
+    "title": "attendees",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID from auth system"
+        },
+        "identification": {
+            "type": "string",
+            "description": "National ID or passport number"
+        },
+        "full_name": {
+            "type": "string",
+            "description": "Full name"
+        },
+        "email": {
+            "type": "string",
+            "description": "Email address"
+        },
+        "phone": {
+            "type": "string",
+            "description": "Phone number"
+        },
+        "id_document_url": {
+            "type": "string",
+            "description": "URL to uploaded ID document image"
+        },
+        "face_photo_url": {
+            "type": "string",
+            "description": "URL to face photo for biometric validation"
+        },
+        "fingerprint_code": {
+            "type": "string",
+            "description": "Fingerprint code for fallback validation"
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp"
+        },
+        "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update timestamp"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "identification",
+        "full_name",
+        "created_at"
+    ]
+}

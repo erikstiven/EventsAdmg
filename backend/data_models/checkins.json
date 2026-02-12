@@ -1,0 +1,61 @@
+{
+    "title": "checkins",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID of the attendee"
+        },
+        "invitation_id": {
+            "type": "integer",
+            "description": "Foreign key to invitations table"
+        },
+        "event_id": {
+            "type": "integer",
+            "description": "Foreign key to events table"
+        },
+        "staff_user_id": {
+            "type": "string",
+            "description": "User ID of staff who performed check-in"
+        },
+        "gate": {
+            "type": "string",
+            "description": "Gate/door identifier"
+        },
+        "biometric_validated": {
+            "type": "boolean",
+            "description": "Whether biometric validation passed"
+        },
+        "validation_method": {
+            "type": "string",
+            "description": "FACIAL, MANUAL_ID, FINGERPRINT"
+        },
+        "validation_notes": {
+            "type": "string",
+            "description": "Notes about validation process"
+        },
+        "checked_in_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Check-in timestamp"
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "invitation_id",
+        "event_id",
+        "staff_user_id",
+        "checked_in_at",
+        "created_at"
+    ]
+}

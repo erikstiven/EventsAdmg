@@ -1,0 +1,75 @@
+{
+    "title": "invitations",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID of the attendee"
+        },
+        "event_id": {
+            "type": "integer",
+            "description": "Foreign key to events table"
+        },
+        "attendee_id": {
+            "type": "integer",
+            "description": "Foreign key to attendees table"
+        },
+        "token": {
+            "type": "string",
+            "description": "Unique QR token (opaque, hashed)"
+        },
+        "token_plain": {
+            "type": "string",
+            "description": "Plain token for demo purposes only"
+        },
+        "status": {
+            "type": "string",
+            "description": "GENERADO, ACTIVADO, PENDIENTE_APROBACION, APROBADO, RECHAZADO, USADO, REVOCADO, EXPIRADO"
+        },
+        "activation_code": {
+            "type": "string",
+            "description": "OTP code for activation"
+        },
+        "rejection_reason": {
+            "type": "string",
+            "description": "Reason if rejected"
+        },
+        "approved_by": {
+            "type": "string",
+            "description": "User ID who approved/rejected"
+        },
+        "approved_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Approval timestamp"
+        },
+        "used_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Check-in timestamp"
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp"
+        },
+        "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update timestamp"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "event_id",
+        "attendee_id",
+        "token",
+        "status",
+        "created_at"
+    ]
+}

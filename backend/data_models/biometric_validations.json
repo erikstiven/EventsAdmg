@@ -1,0 +1,49 @@
+{
+    "title": "biometric_validations",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID of the attendee"
+        },
+        "checkin_id": {
+            "type": "integer",
+            "description": "Foreign key to checkins table"
+        },
+        "captured_photo_url": {
+            "type": "string",
+            "description": "URL to captured photo during check-in"
+        },
+        "reference_photo_url": {
+            "type": "string",
+            "description": "URL to reference photo from registration"
+        },
+        "match_score": {
+            "type": "number",
+            "description": "Similarity score from AI validation"
+        },
+        "validation_result": {
+            "type": "string",
+            "description": "MATCH, NO_MATCH, ERROR"
+        },
+        "ai_response": {
+            "type": "string",
+            "description": "Full AI response for audit"
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "validation_result",
+        "created_at"
+    ]
+}

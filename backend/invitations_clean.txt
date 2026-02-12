@@ -1,0 +1,21 @@
+=== Dumping Invitations ===
+ID: 1
+  Attendee: María González López (maria.gonzalez@example.com)
+  Status: APROBADO
+  Activation Code: None
+------------------------------
+ID: 2
+  Attendee: Carlos Rodríguez Martínez (carlos.rodriguez@example.com)
+  Status: GENERADO
+  Activation Code: None
+------------------------------
+ID: 3
+  Attendee: Carlos Rodríguez Martínez (carlos.rodriguez@example.com)
+  Status: APROBADO
+  Activation Code: None
+------------------------------
+ID: 4
+  Attendee: Mauricio Condor (mauricio.condor@innovastec.com)
+  Status: GENERADO
+  Activation Code: 354724
+------------------------------

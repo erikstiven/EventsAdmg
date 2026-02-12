@@ -1,0 +1,61 @@
+{
+    "title": "events",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "name": {
+            "type": "string",
+            "description": "Event name"
+        },
+        "description": {
+            "type": "string",
+            "description": "Event description"
+        },
+        "location": {
+            "type": "string",
+            "description": "Event location"
+        },
+        "event_date": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Event date"
+        },
+        "start_time": {
+            "type": "string",
+            "description": "Start time"
+        },
+        "end_time": {
+            "type": "string",
+            "description": "End time"
+        },
+        "status": {
+            "type": "string",
+            "description": "Event status: ACTIVE, CANCELLED, COMPLETED"
+        },
+        "created_by": {
+            "type": "string",
+            "description": "User ID who created the event"
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp"
+        },
+        "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update timestamp"
+        }
+    },
+    "required": [
+        "id",
+        "name",
+        "event_date",
+        "status",
+        "created_by",
+        "created_at"
+    ]
+}

@@ -1,0 +1,29 @@
+{
+    "title": "user_roles",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID from auth system"
+        },
+        "role": {
+            "type": "string",
+            "description": "ADMIN, APROBADOR, STAFF, ASISTENTE"
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "role",
+        "created_at"
+    ]
+}

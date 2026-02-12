@@ -1,0 +1,27 @@
+[
+    {
+        "user_id": "admin-demo-001",
+        "role": "ADMIN",
+        "created_at": "2026-01-22 10:00:00"
+    },
+    {
+        "user_id": "aprobador-demo-001",
+        "role": "APROBADOR",
+        "created_at": "2026-01-22 10:00:00"
+    },
+    {
+        "user_id": "staff-demo-001",
+        "role": "STAFF",
+        "created_at": "2026-01-22 10:00:00"
+    },
+    {
+        "user_id": "asistente-demo-001",
+        "role": "ASISTENTE",
+        "created_at": "2026-01-22 10:00:00"
+    },
+    {
+        "user_id": "asistente-demo-002",
+        "role": "ASISTENTE",
+        "created_at": "2026-01-22 10:00:00"
+    }
+]
