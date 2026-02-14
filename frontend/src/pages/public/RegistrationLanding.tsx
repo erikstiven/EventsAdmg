@@ -8,13 +8,14 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import { Camera, Upload, CheckCircle2, AlertTriangle, User, Hourglass, Link as LinkIcon } from 'lucide-react';
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog';
+  BaseModal,
+  BaseModalBody,
+  BaseModalContent,
+  BaseModalDescription,
+  BaseModalFooter,
+  BaseModalHeader,
+  BaseModalTitle,
+} from '@/components/ui/base-modal';
 import { useToast } from '@/hooks/use-toast';
 import { api } from '@/lib/api';
 
@@ -50,8 +51,19 @@ export default function RegistrationLanding() {
   const [showDoc, setShowDoc] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const docInputRef = useRef<HTMLInputElement | null>(null);
+  const selfieInputRef = useRef<HTMLInputElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const docVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const [selfieBlob, setSelfieBlob] = useState<Blob | null>(null);
+  const [docBlob, setDocBlob] = useState<Blob | null>(null);
+  const [docCameraActive, setDocCameraActive] = useState(false);
+  const [docCameraError, setDocCameraError] = useState('');
   const [selectedDocName, setSelectedDocName] = useState('');
   const [selectedDocPreview, setSelectedDocPreview] = useState('');
+  const [selectedSelfieName, setSelectedSelfieName] = useState('');
+  const [selectedSelfiePreview, setSelectedSelfiePreview] = useState('');
   const [confirmSubmitOpen, setConfirmSubmitOpen] = useState(false);
   const [showSaving, setShowSaving] = useState(false);
 
@@ -135,31 +147,139 @@ export default function RegistrationLanding() {
     }
   }, [showDoc, selectedIdx, participants]);
 
-  const markSelfie = (idx: number, selfieUrl?: string) => {
+  useEffect(() => {
+    if (!showBio || selectedIdx === null) return;
+    const current = participants[selectedIdx];
+    if (current?.selfieUrl) {
+      setSelectedSelfiePreview(current.selfieUrl);
+      setSelectedSelfieName(current.selfieName || 'Selfie cargada');
+    } else {
+      setSelectedSelfiePreview('');
+      setSelectedSelfieName('');
+    }
+  }, [showBio, selectedIdx, participants]);
+
+  useEffect(() => {
+    if (!showBio) return;
+    const startCamera = async () => {
+      try {
+        setCameraError('');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: false,
+        });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+          setCameraActive(true);
+        }
+      } catch (error: any) {
+        setCameraError(error?.message || 'No se pudo acceder a la cámara.');
+        setCameraActive(false);
+      }
+    };
+    startCamera();
+    return () => {
+      if (videoRef.current?.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach((track) => track.stop());
+        videoRef.current.srcObject = null;
+      }
+      setCameraActive(false);
+    };
+  }, [showBio]);
+
+  useEffect(() => {
+    if (!showDoc) return;
+    const startDocCamera = async () => {
+      try {
+        setDocCameraError('');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: false,
+        });
+        if (docVideoRef.current) {
+          docVideoRef.current.srcObject = stream;
+          await docVideoRef.current.play();
+          setDocCameraActive(true);
+        }
+      } catch (error: any) {
+        setDocCameraError(error?.message || 'No se pudo acceder a la cámara.');
+        setDocCameraActive(false);
+      }
+    };
+    startDocCamera();
+    return () => {
+      if (docVideoRef.current?.srcObject) {
+        const stream = docVideoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach((track) => track.stop());
+        docVideoRef.current.srcObject = null;
+      }
+      setDocCameraActive(false);
+    };
+  }, [showDoc]);
+
+  const markSelfie = (idx: number, selfieUrl?: string, selfieName?: string) => {
     setParticipants((prev) =>
       prev.map((p, i) =>
-        i === idx ? { ...p, selfie: true, selfieUrl: selfieUrl || p.selfieUrl } : p
+        i === idx
+          ? {
+              ...p,
+              selfie: true,
+              selfieUrl: selfieUrl || p.selfieUrl,
+              selfieName: selfieName || p.selfieName,
+            }
+          : p
       )
     );
   };
 
-  const createPlaceholderSelfie = async (name: string) => {
+  const validateImageFile = (file?: File) => {
+    if (!file) return 'Selecciona una imagen.';
+    if (!file.type.startsWith('image/')) return 'El archivo debe ser una imagen.';
+    const maxMb = 5;
+    if (file.size > maxMb * 1024 * 1024) return `La imagen supera ${maxMb}MB.`;
+    return '';
+  };
+
+  const captureSelfieFromCamera = async () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
     const canvas = document.createElement('canvas');
-    canvas.width = 600;
-    canvas.height = 600;
+    const width = video.videoWidth || 640;
+    const height = video.videoHeight || 480;
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.fillStyle = '#f1f5f9';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#0f172a';
-      ctx.font = '24px sans-serif';
-      ctx.fillText('Selfie de prueba', 170, 280);
-      ctx.font = '16px sans-serif';
-      ctx.fillText(name || 'Invitado', 230, 320);
-    }
-    return new Promise<Blob>((resolve) => {
-      canvas.toBlob((blob) => resolve(blob || new Blob()), 'image/png');
-    });
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, width, height);
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92)
+    );
+    if (!blob) return;
+    setSelfieBlob(blob);
+    setSelectedSelfieName(`selfie-${Date.now()}.jpg`);
+    setSelectedSelfiePreview(URL.createObjectURL(blob));
+  };
+
+  const captureDocFromCamera = async () => {
+    if (!docVideoRef.current) return;
+    const video = docVideoRef.current;
+    const canvas = document.createElement('canvas');
+    const width = video.videoWidth || 1280;
+    const height = video.videoHeight || 720;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, width, height);
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92)
+    );
+    if (!blob) return;
+    setDocBlob(blob);
+    setSelectedDocName(`cedula-${Date.now()}.jpg`);
+    setSelectedDocPreview(URL.createObjectURL(blob));
   };
 
   const markDoc = (idx: number, docName?: string, docUrl?: string) => {
@@ -397,15 +517,15 @@ export default function RegistrationLanding() {
         )}
       </div>
 
-      <Dialog open={confirmSubmitOpen} onOpenChange={setConfirmSubmitOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Confirmar envío</DialogTitle>
-            <DialogDescription>
+      <BaseModal open={confirmSubmitOpen} onOpenChange={setConfirmSubmitOpen}>
+        <BaseModalContent size="sm" blur>
+          <BaseModalHeader>
+            <BaseModalTitle>Confirmar envío</BaseModalTitle>
+            <BaseModalDescription>
               Se enviará el registro del grupo para revisión. Luego no podrás editar desde este enlace.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
+            </BaseModalDescription>
+          </BaseModalHeader>
+          <BaseModalFooter>
             <Button variant="outline" onClick={() => setConfirmSubmitOpen(false)}>
               Cancelar
             </Button>
@@ -418,31 +538,101 @@ export default function RegistrationLanding() {
             >
               {saving ? 'Enviando...' : 'Confirmar envío'}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </BaseModalFooter>
+        </BaseModalContent>
+      </BaseModal>
 
-      <Dialog open={showSaving} onOpenChange={() => {}}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Enviando registro...</DialogTitle>
-            <DialogDescription>Espera unos segundos.</DialogDescription>
-          </DialogHeader>
-        </DialogContent>
-      </Dialog>
+      <BaseModal open={showSaving} onOpenChange={() => {}}>
+        <BaseModalContent size="sm" blur>
+          <BaseModalHeader>
+            <BaseModalTitle>Enviando registro...</BaseModalTitle>
+            <BaseModalDescription>Espera unos segundos.</BaseModalDescription>
+          </BaseModalHeader>
+        </BaseModalContent>
+      </BaseModal>
 
-      <Dialog open={showBio} onOpenChange={setShowBio}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Registrar rostro</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 text-sm text-gray-700">
-            <p>Se guardará un registro temporal del rostro (demo).</p>
-            <div className="border rounded-md h-48 bg-slate-100 flex items-center justify-center text-gray-500">
-              Vista previa de prueba
+      <BaseModal open={showBio} onOpenChange={setShowBio}>
+        <BaseModalContent size="md" blur>
+          <BaseModalHeader>
+            <BaseModalTitle>Registrar rostro</BaseModalTitle>
+          </BaseModalHeader>
+          <BaseModalBody className="space-y-4 text-sm text-gray-700">
+            <p>Escanea tu rostro con la cámara y captura una foto clara.</p>
+            <div className="relative w-full aspect-square max-h-[320px] sm:max-h-[420px] overflow-hidden rounded-xl bg-black">
+              {selectedSelfiePreview ? (
+                <img
+                  src={selectedSelfiePreview}
+                  alt={selectedSelfieName || 'Previsualización selfie'}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <video
+                  ref={videoRef}
+                  className="h-full w-full object-cover"
+                  playsInline
+                  muted
+                />
+              )}
+              {!selectedSelfiePreview && (
+                <div className="pointer-events-none absolute inset-0">
+                  <div
+                    className="absolute inset-0"
+                    style={{
+                      background:
+                        'radial-gradient(circle at center, transparent 0 42%, rgba(0,0,0,0.6) 62%)',
+                    }}
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="h-[76%] w-[76%] rounded-full border border-white/60 sm:h-[78%] sm:w-[78%]" />
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-          <DialogFooter>
+            {!selectedSelfiePreview && (
+              <div className="text-xs text-slate-500">
+                Alinea tu rostro dentro del círculo y mantén la mirada al frente.
+              </div>
+            )}
+            {cameraError && (
+              <div className="text-xs text-amber-600">{cameraError}</div>
+            )}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={captureSelfieFromCamera}
+                disabled={savingSelfie || locked || !cameraActive}
+              >
+                <Camera className="h-4 w-4 mr-2" /> Capturar rostro
+              </Button>
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={() => selfieInputRef.current?.click()}
+                disabled={savingSelfie || locked}
+              >
+                <Upload className="h-4 w-4 mr-2" /> Usar archivo
+              </Button>
+              <input
+                ref={selfieInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  setSelfieBlob(file || null);
+                  setSelectedSelfieName(file?.name || '');
+                  if (file) {
+                    const url = URL.createObjectURL(file);
+                    setSelectedSelfiePreview(url);
+                  } else {
+                    setSelectedSelfiePreview('');
+                  }
+                }}
+              />
+            </div>
+          </BaseModalBody>
+          <BaseModalFooter>
             <Button
               onClick={async () => {
                 if (selectedIdx !== null && token) {
@@ -451,8 +641,26 @@ export default function RegistrationLanding() {
                     const participant = participants[selectedIdx];
                     const role = participant.rol === 'Titular' ? 'Titular' : 'Acompanante';
                     const companionIndex = participant.rol === 'Acompañante' ? selectedIdx - 1 : undefined;
-                    const placeholder = await createPlaceholderSelfie(participant.name);
-                    const file = new File([placeholder], 'selfie-demo.png', { type: 'image/png' });
+                    let fileToSend: File | null = null;
+                    if (selfieBlob) {
+                      fileToSend = new File([selfieBlob], selectedSelfieName || 'selfie.jpg', {
+                        type: selfieBlob.type || 'image/jpeg',
+                      });
+                    } else {
+                      const fileInput = selfieInputRef.current?.files?.[0];
+                      fileToSend = fileInput || null;
+                    }
+                    const validationError = validateImageFile(fileToSend || undefined);
+                    if (validationError) {
+                      toast({
+                        title: 'Archivo inválido',
+                        description: validationError,
+                        variant: 'destructive',
+                      });
+                      setSavingSelfie(false);
+                      return;
+                    }
+                    const file = fileToSend as File;
                     const response = await api.publicInvitations.upload(token, {
                       role,
                       kind: 'selfie',
@@ -463,7 +671,8 @@ export default function RegistrationLanding() {
                       role === 'Titular'
                         ? response.titular_selfie_url
                         : response.companions?.[companionIndex!]?.selfie_url;
-                    markSelfie(selectedIdx, updatedSelfieUrl);
+                    const finalSelfieUrl = updatedSelfieUrl || selectedSelfiePreview || '';
+                    markSelfie(selectedIdx, finalSelfieUrl, selectedSelfieName);
                   } catch (error: any) {
                     toast({
                       title: 'Error',
@@ -475,23 +684,26 @@ export default function RegistrationLanding() {
                   }
                 }
                 setShowBio(false);
+                setSelectedSelfieName('');
+                setSelectedSelfiePreview('');
+                setSelfieBlob(null);
               }}
               disabled={savingSelfie || locked}
             >
               {savingSelfie ? 'Guardando...' : 'Guardar rostro'}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </BaseModalFooter>
+        </BaseModalContent>
+      </BaseModal>
 
-      <Dialog open={showDoc} onOpenChange={setShowDoc}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Subir cédula</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 text-sm text-gray-700">
+      <BaseModal open={showDoc} onOpenChange={setShowDoc}>
+        <BaseModalContent size="md" blur>
+          <BaseModalHeader>
+            <BaseModalTitle>Subir cédula</BaseModalTitle>
+          </BaseModalHeader>
+          <BaseModalBody className="space-y-4 text-sm text-gray-700">
             <p>Adjunta imágenes claras de la cédula. (Validación pendiente)</p>
-            <div className="border rounded-md h-56 bg-slate-100 flex items-center justify-center text-gray-500">
+            <div className="border rounded-md h-56 bg-slate-100 flex items-center justify-center text-gray-500 overflow-hidden">
               {selectedDocPreview ? (
                 <img
                   src={selectedDocPreview}
@@ -499,10 +711,25 @@ export default function RegistrationLanding() {
                   className="max-h-52 object-contain"
                 />
               ) : (
-                <span>{selectedDocName ? `Archivo: ${selectedDocName}` : 'Zona de previsualización'}</span>
+                <video
+                  ref={docVideoRef}
+                  className="h-52 w-full object-cover"
+                  playsInline
+                  muted
+                />
               )}
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            {docCameraError && (
+              <div className="text-xs text-amber-600">{docCameraError}</div>
+            )}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Button
+                variant="outline"
+                onClick={captureDocFromCamera}
+                disabled={savingDoc || locked || !docCameraActive}
+              >
+                <Camera className="h-4 w-4 mr-2" /> Tomar foto
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => docInputRef.current?.click()}
@@ -517,6 +744,7 @@ export default function RegistrationLanding() {
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
+                  setDocBlob(file || null);
                   setSelectedDocName(file?.name || '');
                   if (file) {
                     const url = URL.createObjectURL(file);
@@ -527,12 +755,12 @@ export default function RegistrationLanding() {
                 }}
               />
             </div>
-          </div>
-          <DialogFooter>
+          </BaseModalBody>
+          <BaseModalFooter>
             <Button
               onClick={async () => {
                 if (selectedIdx !== null) {
-                  if (!selectedDocName) {
+                  if (!selectedDocName && !docBlob) {
                     toast({
                       title: 'Falta archivo',
                       description: 'Selecciona una imagen de la cédula antes de guardar.',
@@ -545,13 +773,31 @@ export default function RegistrationLanding() {
                     const participant = participants[selectedIdx];
                     const role = participant.rol === 'Titular' ? 'Titular' : 'Acompanante';
                     const companionIndex = participant.rol === 'Acompañante' ? selectedIdx - 1 : undefined;
-                    const fileInput = docInputRef.current?.files?.[0];
-                    if (fileInput && token) {
+                    let fileToSend: File | null = null;
+                    if (docBlob) {
+                      fileToSend = new File([docBlob], selectedDocName || 'cedula.jpg', {
+                        type: docBlob.type || 'image/jpeg',
+                      });
+                    } else {
+                      const fileInput = docInputRef.current?.files?.[0];
+                      fileToSend = fileInput || null;
+                    }
+                    const validationError = validateImageFile(fileToSend || undefined);
+                    if (validationError) {
+                      toast({
+                        title: 'Archivo inválido',
+                        description: validationError,
+                        variant: 'destructive',
+                      });
+                      setSavingDoc(false);
+                      return;
+                    }
+                    if (fileToSend && token) {
                       const response = await api.publicInvitations.upload(token, {
                         role,
                         kind: 'doc',
                         companion_index: companionIndex,
-                        file: fileInput,
+                        file: fileToSend,
                       });
                       const updatedDocUrl =
                         role === 'Titular'
@@ -575,14 +821,15 @@ export default function RegistrationLanding() {
                 setShowDoc(false);
                 setSelectedDocName('');
                 setSelectedDocPreview('');
+                setDocBlob(null);
               }}
               disabled={savingDoc || locked}
             >
               {savingDoc ? 'Guardando...' : 'Guardar cédula'}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </BaseModalFooter>
+        </BaseModalContent>
+      </BaseModal>
     </div>
   );
 }

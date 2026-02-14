@@ -10,7 +10,7 @@ import RoleSelector from './pages/RoleSelector';
 
 // Admin pages
 import Events from './pages/admin/Events';
-import Attendees2 from './pages/admin/Attendees2';
+import Attendees from './pages/admin/Attendees';
 import InvitationsByQuota from './pages/admin/InvitationsByQuota';
 import EmailSettings from './pages/admin/EmailSettings';
 import Auditoria from './pages/admin/Auditoria';
@@ -140,17 +140,15 @@ function AppRoutes() {
       <Route
         path="/admin/attendees"
         element={
-          <ProtectedRoute>
-            <Navigate to="/admin/attendees2" replace />
-          </ProtectedRoute>
+          <RoleRoute allowedRoles={['ADMIN']} requiredPermissions={['attendees.read']}>
+            <Attendees />
+          </RoleRoute>
         }
       />
       <Route
         path="/admin/attendees2"
         element={
-          <RoleRoute allowedRoles={['ADMIN']} requiredPermissions={['attendees.read']}>
-            <Attendees2 />
-          </RoleRoute>
+          <Navigate to="/admin/attendees" replace />
         }
       />
       <Route

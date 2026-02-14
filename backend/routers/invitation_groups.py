@@ -335,7 +335,7 @@ async def request_update_invitation_group(
     invitation_id: int,
     data: InvitationGroupUpdateRequest,
     current_user: UserResponse = Depends(get_current_user),
-    _perm: UserResponse = Depends(require_any_permission("invitations.update")),
+    _perm: UserResponse = Depends(require_any_permission("approvals.decide")),
     db: AsyncSession = Depends(get_db),
 ):
     """Enable update window for approved/partially approved/pending-approval groups."""

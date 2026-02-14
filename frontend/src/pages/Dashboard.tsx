@@ -60,7 +60,7 @@ export default function Dashboard() {
           title: 'Asistentes',
           description: 'Administrar asistentes del sistema',
           icon: Users,
-          path: '/admin/attendees2',
+          path: '/admin/attendees',
           color: 'bg-teal-500',
         },
       );
@@ -169,7 +169,7 @@ export default function Dashboard() {
             title: 'Asistentes',
             description: 'Administrar asistentes del sistema',
             icon: Users,
-            path: '/admin/attendees2',
+            path: '/admin/attendees',
             color: 'bg-teal-500',
           },
           {

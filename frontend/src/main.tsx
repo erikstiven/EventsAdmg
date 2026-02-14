@@ -1,9 +1,34 @@
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { loadRuntimeConfig } from './lib/config';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Render the app immediately without waiting for config
-createRoot(document.getElementById('root')!).render(<App />);
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 15000,
+      refetchOnWindowFocus: true,
+      retry: 1,
+    },
+  },
+});
+
+const mountApp = () => {
+  createRoot(document.getElementById('root')!).render(
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
+  );
+};
+
+loadRuntimeConfig()
+  .catch(() => {
+    // Fall back to default config
+  })
+  .finally(() => {
+    mountApp();
+  });
 
 // Deshabilitamos SW en desarrollo y limpiamos cualquier registro/caché previo
 if (import.meta.env.DEV && 'serviceWorker' in navigator) {

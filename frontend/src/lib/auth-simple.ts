@@ -3,7 +3,7 @@
  * Replaces Atoms Backend auth to avoid onRefresh error.
  */
 
-const API_BASE_URL = '';
+import { config } from './config';
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
 
@@ -46,7 +46,7 @@ class AuthSimpleClient {
    * Login with email and password
    */
   async login(email: string, password: string): Promise<LoginResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/v1/auth-simple/login`, {
+    const response = await fetch(`${config.API_BASE_URL}/api/v1/auth-simple/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -94,7 +94,7 @@ class AuthSimpleClient {
       throw new Error('Not authenticated');
     }
 
-    const response = await fetch(`${API_BASE_URL}/api/v1/auth-simple/me`, {
+    const response = await fetch(`${config.API_BASE_URL}/api/v1/auth-simple/me`, {
       headers: {
         'Authorization': `Bearer ${this.token}`,
       },
@@ -153,7 +153,9 @@ class AuthSimpleClient {
       'Authorization': `Bearer ${this.token}`,
     };
 
-    return fetch(url, { ...options, headers });
+    const baseUrl = config.API_BASE_URL || '';
+    const finalUrl = url.startsWith('http') ? url : `${baseUrl}${url}`;
+    return fetch(finalUrl, { ...options, headers });
   }
 }
 

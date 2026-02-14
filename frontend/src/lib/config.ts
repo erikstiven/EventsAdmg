@@ -6,9 +6,11 @@ let runtimeConfig: {
 // Configuration loading state
 let configLoading = true;
 
+const isDev = import.meta.env.DEV;
+
 // Default fallback configuration
 const defaultConfig = {
-  API_BASE_URL: '', // Only used if runtime config fails to load
+  API_BASE_URL: isDev ? 'http://localhost:8000' : '',
 };
 
 // Function to load runtime configuration

@@ -23,6 +23,7 @@ from models.invitation_group_statuses import (
     normalize_invitation_group_status,
 )
 from services.attendees import AttendeesService
+from services.invitations import InvitationsService
 from pathlib import Path
 from models.invitation_groups import Invitation_groups
 from services.email_service import EmailService
@@ -53,6 +54,7 @@ class InvitationGroupsService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.upload_dir = Path("uploads") / "invitation_groups"
+        self._attendees_service = AttendeesService(self.db)
 
     @staticmethod
     def _status_label(obj: Invitation_groups, default: str = "Pendiente completar") -> str:
@@ -224,6 +226,7 @@ class InvitationGroupsService:
 
         companions = await self._load_companions(obj)
         companions, tokens_changed = await self._ensure_qr_tokens(obj, companions)
+        await self._ensure_individual_invitations(obj, companions)
 
         event_name = f"Evento {obj.event_id}"
         event_date = ""
@@ -356,6 +359,8 @@ class InvitationGroupsService:
         # Per-person approval flow
         if participants:
             await self._apply_participant_decisions(obj, companions, participants)
+            companions, _ = await self._ensure_qr_tokens(obj, companions)
+            await self._ensure_individual_invitations(obj, companions)
             obj.updated_at = datetime.now(timezone.utc)
             await self._record_status_change(
                 invitation_group_id=obj.id,
@@ -387,6 +392,8 @@ class InvitationGroupsService:
         await self.db.refresh(obj)
 
         if approved:
+            companions, _ = await self._ensure_qr_tokens(obj, companions)
+            await self._ensure_individual_invitations(obj, companions)
             await self._send_qr_email(obj, companions)
         return obj
 
@@ -627,6 +634,7 @@ class InvitationGroupsService:
         link = obj.link or self._build_link(obj.token_plain or "")
         companions = await self._load_companions(obj)
         companions, tokens_changed = await self._ensure_qr_tokens(obj, companions)
+        await self._ensure_individual_invitations(obj, companions)
         subject = os.environ.get("INVITATION_QR_EMAIL_SUBJECT", "Tu QR de acceso")
         template = os.environ.get("INVITATION_QR_EMAIL_TEMPLATE", self.DEFAULT_QR_EMAIL_TEMPLATE)
 
@@ -739,6 +747,118 @@ class InvitationGroupsService:
         if changed:
             await self._replace_companions(obj.id, updated)
         return updated, changed
+
+    @staticmethod
+    def _resolve_invitation_status(approved: Optional[bool], rejection_reason: Optional[str]) -> str:
+        if approved is True:
+            return "APROBADO"
+        if rejection_reason:
+            return "RECHAZADO"
+        return "PENDIENTE"
+
+    async def _ensure_individual_invitations(
+        self,
+        obj: Invitation_groups,
+        companions: list[dict],
+    ) -> None:
+        """Ensure each participant has a real invitation tied to their QR token."""
+        invitations_service = InvitationsService(self.db)
+        now = datetime.now(timezone.utc)
+
+        async def ensure_person(
+            *,
+            token_plain: Optional[str],
+            identification: Optional[str],
+            full_name: Optional[str],
+            email: Optional[str],
+            phone: Optional[str],
+            id_document_url: Optional[str],
+            face_photo_url: Optional[str],
+            fingerprint_code: Optional[str],
+            approved: Optional[bool],
+            rejection_reason: Optional[str],
+        ) -> None:
+            if not token_plain or not identification or not full_name:
+                return
+
+            attendee = await self._get_or_create_attendee(
+                identification=identification,
+                full_name=full_name,
+                email=email,
+                phone=phone,
+                fingerprint_code=fingerprint_code,
+                user_id=obj.created_by,
+            )
+            if attendee:
+                updates: dict[str, Any] = {}
+                if id_document_url and (not attendee.id_document_url or attendee.id_document_url != id_document_url):
+                    updates["id_document_url"] = id_document_url
+                if face_photo_url and (not attendee.face_photo_url or attendee.face_photo_url != face_photo_url):
+                    updates["face_photo_url"] = face_photo_url
+                if updates:
+                    updates["updated_at"] = now
+                    await self._attendees_service.update(attendee.id, updates)
+
+            status = self._resolve_invitation_status(approved, rejection_reason)
+            invitation = await invitations_service.get_by_field("token_plain", token_plain)
+            if invitation:
+                if invitation.status == "USADO":
+                    return
+                update_data: dict[str, Any] = {
+                    "event_id": obj.event_id,
+                    "attendee_id": attendee.id,
+                    "status": status,
+                    "biometric_photo": face_photo_url,
+                    "updated_at": now,
+                }
+                if status == "APROBADO" and not invitation.approved_at:
+                    update_data["approved_at"] = now
+                await invitations_service.update(invitation.id, update_data)
+                return
+
+            token_hash = hashlib.sha256(token_plain.encode("utf-8")).hexdigest()
+            data = {
+                "event_id": obj.event_id,
+                "attendee_id": attendee.id,
+                "token": token_hash,
+                "token_plain": token_plain,
+                "status": status,
+                "biometric_photo": face_photo_url,
+                "created_at": now,
+                "updated_at": now,
+            }
+            if status == "APROBADO":
+                data["approved_at"] = now
+            await invitations_service.create(data, obj.created_by)
+
+        await ensure_person(
+            token_plain=obj.titular_qr_token,
+            identification=obj.titular_identification,
+            full_name=obj.titular_name,
+            email=obj.email,
+            phone=obj.phone,
+            id_document_url=obj.titular_doc_url,
+            face_photo_url=obj.titular_selfie_url,
+            fingerprint_code=obj.fingerprint_code,
+            approved=obj.titular_approved,
+            rejection_reason=obj.titular_rejection_reason,
+        )
+
+        for comp in companions:
+            if not isinstance(comp, dict):
+                continue
+            await ensure_person(
+                token_plain=comp.get("qr_token"),
+                identification=comp.get("cedula"),
+                full_name=comp.get("name"),
+                email=comp.get("email"),
+                phone=comp.get("telefono"),
+                id_document_url=comp.get("doc_url"),
+                face_photo_url=comp.get("selfie_url"),
+                fingerprint_code=comp.get("codigo"),
+                approved=comp.get("approved"),
+                rejection_reason=comp.get("rejection_reason"),
+            )
 
     async def get_list(self, skip: int = 0, limit: int = 50) -> Dict[str, Any]:
         try:
@@ -996,16 +1116,44 @@ class InvitationGroupsService:
                 biometric_service = FacialBiometricsService(self.db)
                 person_id: Optional[int] = None
                 source = "invitation_groups.public_upload.selfie"
+                identification = None
+                full_name = None
+                email = None
+                phone = None
+                fingerprint_code = None
                 if role.lower() == "titular":
-                    person_id = await biometric_service.resolve_person_id_by_identification(obj.titular_identification)
+                    identification = obj.titular_identification
+                    full_name = obj.titular_name
+                    email = obj.email
+                    phone = obj.phone
+                    fingerprint_code = obj.fingerprint_code
+                    person_id = await biometric_service.resolve_person_id_by_identification(identification)
                     image_source = obj.titular_selfie_url or public_url
                 else:
                     image_source = None
                     companions = await self._load_companions(obj)
                     if companion_index is not None and 0 <= companion_index < len(companions):
                         companion = companions[companion_index]
-                        person_id = await biometric_service.resolve_person_id_by_identification(companion.get("cedula"))
+                        identification = companion.get("cedula")
+                        full_name = companion.get("name")
+                        email = companion.get("email")
+                        phone = companion.get("telefono")
+                        fingerprint_code = companion.get("codigo")
+                        person_id = await biometric_service.resolve_person_id_by_identification(identification)
                         image_source = companion.get("selfie_url") or public_url
+                if not person_id and identification:
+                    try:
+                        attendee = await self._get_or_create_attendee(
+                            identification=identification,
+                            full_name=full_name,
+                            email=email,
+                            phone=phone,
+                            fingerprint_code=fingerprint_code,
+                            user_id="public",
+                        )
+                        person_id = attendee.id if attendee else None
+                    except Exception as exc:
+                        logger.warning("No se pudo crear attendee para embedding: %s", exc)
                 if person_id and image_source:
                     await biometric_service.register_embedding_for_person(
                         person_id=person_id,
@@ -1076,34 +1224,68 @@ class InvitationGroupsService:
 
         # Create attendees records (best-effort)
         try:
-            attendees_service = AttendeesService(self.db)
-            now = datetime.now(timezone.utc)
-            await attendees_service.create(
-                {
-                    "identification": obj.titular_identification,
-                    "full_name": obj.titular_name,
-                    "email": obj.email,
-                    "phone": obj.phone,
-                    "fingerprint_code": obj.fingerprint_code,
-                    "created_at": now,
-                    "updated_at": now,
-                },
+            await self._get_or_create_attendee(
+                identification=obj.titular_identification,
+                full_name=obj.titular_name,
+                email=obj.email,
+                phone=obj.phone,
+                fingerprint_code=obj.fingerprint_code,
                 user_id="public",
             )
             for comp in companions:
-                await attendees_service.create(
-                    {
-                        "identification": comp.get("cedula", ""),
-                        "full_name": comp.get("name", ""),
-                        "email": comp.get("email", ""),
-                        "phone": comp.get("telefono", ""),
-                        "fingerprint_code": comp.get("codigo", ""),
-                        "created_at": now,
-                        "updated_at": now,
-                    },
+                await self._get_or_create_attendee(
+                    identification=comp.get("cedula", ""),
+                    full_name=comp.get("name", ""),
+                    email=comp.get("email", ""),
+                    phone=comp.get("telefono", ""),
+                    fingerprint_code=comp.get("codigo", ""),
                     user_id="public",
                 )
         except Exception as exc:
             logger.warning(f"No se pudieron crear asistentes: {exc}")
 
         return obj
+
+    async def _get_or_create_attendee(
+        self,
+        identification: Optional[str],
+        full_name: Optional[str],
+        email: Optional[str],
+        phone: Optional[str],
+        fingerprint_code: Optional[str],
+        user_id: str,
+    ) -> Optional[Any]:
+        if not identification:
+            return None
+        normalized = identification.strip()
+        if not normalized:
+            return None
+        attendee = await self._attendees_service.get_by_field("identification", normalized)
+        now = datetime.now(timezone.utc)
+        if attendee:
+            updates: dict[str, Any] = {}
+            if full_name and not attendee.full_name:
+                updates["full_name"] = full_name
+            if email and not attendee.email:
+                updates["email"] = email
+            if phone and not attendee.phone:
+                updates["phone"] = phone
+            if fingerprint_code and not attendee.fingerprint_code:
+                updates["fingerprint_code"] = fingerprint_code
+            if updates:
+                updates["updated_at"] = now
+                await self._attendees_service.update(attendee.id, updates)
+            return attendee
+
+        return await self._attendees_service.create(
+            {
+                "identification": normalized,
+                "full_name": full_name or normalized,
+                "email": email,
+                "phone": phone,
+                "fingerprint_code": fingerprint_code,
+                "created_at": now,
+                "updated_at": now,
+            },
+            user_id=user_id,
+        )

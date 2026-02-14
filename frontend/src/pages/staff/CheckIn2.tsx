@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { Layout } from '@/components/Layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { QRScanner } from '@/components/QRScanner';
+import { FaceModal } from '@/components/FaceModal';
 import {
   Dialog,
   DialogContent,
@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { api } from '@/lib/api';
-import { Camera, CreditCard, ScanLine } from 'lucide-react';
+import { Camera, CheckCircle2, CreditCard, ScanLine } from 'lucide-react';
 
 type FaceResult = 'pendiente' | 'aprobado' | 'rechazado';
 type ApprovalMethod = 'Automática' | 'Manual';
@@ -69,10 +69,10 @@ export default function CheckIn2() {
   const [verificationOpen, setVerificationOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [approvalMethod, setApprovalMethod] = useState<ApprovalMethod>('Automática');
-  const [biometricLoading, setBiometricLoading] = useState(false);
   const [manualLoading, setManualLoading] = useState(false);
   const [qrCheckInLoading, setQrCheckInLoading] = useState(false);
   const [lastScan, setLastScan] = useState<LastScan | null>(null);
+  const [faceScanOpen, setFaceScanOpen] = useState(false);
   const [scanFeedback, setScanFeedback] = useState<ScanFeedback>({
     type: 'neutral',
     title: 'Listo para escanear',
@@ -151,6 +151,7 @@ export default function CheckIn2() {
 
   const openVerification = () => {
     setFaceResult('pendiente');
+    setIdVerified(true);
     setVerificationOpen(true);
   };
 
@@ -255,7 +256,7 @@ export default function CheckIn2() {
     }
   };
 
-  const handleBiometricScan = async () => {
+  const handleBiometricScan = () => {
     if (!facialFlowEnabled) {
       toast({
         title: 'Función pendiente',
@@ -272,28 +273,23 @@ export default function CheckIn2() {
       setFaceResult('rechazado');
       return;
     }
-    try {
-      setBiometricLoading(true);
-      const res = await api.checkIns.validateBiometric(qrData.invitation_id, '');
-      const approved = !!res?.success;
-      setFaceResult(approved ? 'aprobado' : 'rechazado');
-      if (approved) {
-        toast({
-          title: 'Biometría aprobada',
-          description: 'Ahora verifica cédula física y presiona "Aprobar ingreso".',
-        });
-      } else {
-        toast({
-          title: 'Validación biométrica',
-          description: res?.message || 'El rostro no coincide. Usa aprobación manual.',
-        });
-      }
-    } catch (error) {
-      toast({ title: 'Error', description: 'No se pudo validar la biometría.' });
-      setFaceResult('rechazado');
-    } finally {
-      setBiometricLoading(false);
+    setFaceScanOpen(true);
+  };
+
+  const handleBiometricValidated = (result: { aprobado: boolean; similitud: number }) => {
+    setFaceResult(result.aprobado ? 'aprobado' : 'rechazado');
+    if (result.aprobado) {
+      toast({
+        title: 'Biometría aprobada',
+        description: `Similitud ${result.similitud.toFixed(2)}. Verifica cédula física y aprueba el ingreso.`,
+      });
+    } else {
+      toast({
+        title: 'Biometría rechazada',
+        description: `Similitud ${result.similitud.toFixed(2)}. Usa aprobación manual.`,
+      });
     }
+    setFaceScanOpen(false);
   };
 
   const handleAutoApprove = async () => {
@@ -562,14 +558,14 @@ export default function CheckIn2() {
                   variant="outline"
                   size="sm"
                   onClick={handleBiometricScan}
-                  disabled={biometricLoading || !facialFlowEnabled}
+                  disabled={!facialFlowEnabled}
                   title={
                     !facialFlowEnabled
                       ? 'Pendiente: reconocimiento facial se habilitará al final del proyecto'
                       : ''
                   }
                 >
-                  {biometricLoading ? 'Validando…' : 'Escanear rostro'}
+                  Escanear rostro
                 </Button>
               </div>
               <p className="text-sm font-medium mb-3">Rostro registrado</p>
@@ -609,15 +605,9 @@ export default function CheckIn2() {
                 )}
                 <p className="mt-2 text-xs text-gray-500 text-center">Documento del invitado</p>
               </div>
-              <div className="mt-3 flex items-center gap-2">
-                <Checkbox
-                  id="cedula-ok-modal"
-                  checked={idVerified}
-                  onCheckedChange={(v) => setIdVerified(!!v)}
-                />
-                <label htmlFor="cedula-ok-modal" className="text-sm text-gray-700">
-                  Cédula física verificada por staff (obligatorio)
-                </label>
+              <div className="mt-3 flex items-center gap-2 text-sm text-gray-700">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                <span>Cédula física verificada por staff (obligatorio)</span>
               </div>
             </div>
 
@@ -676,6 +666,13 @@ export default function CheckIn2() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <FaceModal
+        open={faceScanOpen}
+        onOpenChange={setFaceScanOpen}
+        invitadoId={qrData?.attendee_id ?? null}
+        onValidated={handleBiometricValidated}
+      />
 
       <Dialog open={approvalOpen} onOpenChange={(open) => !open && closeApprovalDialog()}>
         <DialogContent className="sm:max-w-md">

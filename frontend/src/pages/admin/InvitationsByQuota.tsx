@@ -100,6 +100,8 @@ export default function InvitationsByQuota() {
   const [reopenTarget, setReopenTarget] = useState<QuotaInvitation | null>(null);
   const [reopenReason, setReopenReason] = useState('');
   const [reopenLoading, setReopenLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const handleCopy = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -132,7 +134,7 @@ export default function InvitationsByQuota() {
     loadEvents();
   }, [toast]);
 
-  const fetchInvitations = useCallback(async () => {
+  const fetchInvitations = useCallback(async (options?: { silent?: boolean }) => {
     try {
       const response = await api.invitationGroups.list({ limit: 2000 });
       const normalizeStatus = (rawStatus?: string) => {
@@ -190,13 +192,16 @@ export default function InvitationsByQuota() {
         };
       });
       setInvitations(mapped);
+      setLastUpdatedAt(new Date());
       return mapped;
     } catch {
-      toast({
-        title: 'Error',
-        description: 'No se pudieron cargar las invitaciones por grupo',
-        variant: 'destructive',
-      });
+      if (!options?.silent) {
+        toast({
+          title: 'Error',
+          description: 'No se pudieron cargar las invitaciones por grupo',
+          variant: 'destructive',
+        });
+      }
       return [];
     }
   }, [events, toast]);
@@ -204,6 +209,25 @@ export default function InvitationsByQuota() {
   useEffect(() => {
     fetchInvitations();
   }, [fetchInvitations]);
+
+  useEffect(() => {
+    const intervalMs = 20000;
+    const intervalId = window.setInterval(() => {
+      if (document.hidden) return;
+      fetchInvitations({ silent: true });
+    }, intervalMs);
+    return () => window.clearInterval(intervalId);
+  }, [fetchInvitations]);
+
+  useEffect(() => {
+    if (!detailInvitation) return;
+    const latest =
+      invitations.find((inv) => inv.rawId && inv.rawId === detailInvitation.rawId) ||
+      invitations.find((inv) => inv.id === detailInvitation.id);
+    if (latest) {
+      setDetailInvitation(latest);
+    }
+  }, [detailInvitation, invitations]);
 
   const generatedLink = useMemo(() => {
     if (!form.titular) return '';
@@ -666,8 +690,27 @@ export default function InvitationsByQuota() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-3xl font-bold">Invitaciones por grupo</h1>
-            <p className="text-gray-600">Crea un link único para grupos de hasta 3 personas.</p>
+            <p className="text-gray-600">
+              Crea un link único para grupos de hasta 3 personas.
+              {lastUpdatedAt && (
+                <span className="ml-2 text-xs text-gray-400">
+                  Actualizado {lastUpdatedAt.toLocaleTimeString()}
+                </span>
+              )}
+            </p>
           </div>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              setRefreshing(true);
+              await fetchInvitations();
+              setRefreshing(false);
+            }}
+            disabled={refreshing}
+          >
+            <RotateCcw className="h-4 w-4 mr-2" />
+            {refreshing ? 'Actualizando...' : 'Actualizar'}
+          </Button>
         </div>
 
         <Card>

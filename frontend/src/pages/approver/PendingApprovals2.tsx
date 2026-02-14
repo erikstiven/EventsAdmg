@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Layout } from '@/components/Layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,7 @@ import { api } from '@/lib/api';
 import { config } from '@/lib/config';
 import { useToast } from '@/hooks/use-toast';
 import { QRCodeDisplay } from '@/components/QRCodeDisplay';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 const STATUS_LABELS: Record<string, { label: string; className: string }> = {
   'pendiente aprobacion': { label: 'Pendiente aprobación', className: 'bg-amber-100 text-amber-800' },
@@ -81,8 +82,7 @@ type Participant = {
 
 export default function PendingApprovals2() {
   const { toast } = useToast();
-  const [items, setItems] = useState<ApprovalItem[]>([]);
-  const [events, setEvents] = useState<{ id: number; name: string }[]>([]);
+  const queryClient = useQueryClient();
   const [selected, setSelected] = useState<ApprovalItem | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -109,45 +109,65 @@ export default function PendingApprovals2() {
   const [updateSet, setUpdateSet] = useState<Record<string, boolean>>({});
   const [isUpdating, setIsUpdating] = useState(false);
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [eventsRes, pendingRes] = await Promise.all([
-          api.events.list({ limit: 2000 }),
-          api.invitationGroups.pendingApprovals(),
-        ]);
-        const eventList = eventsRes.items || [];
-        setEvents(eventList);
-        const mapped = (pendingRes || []).map((item: any) => ({
-          id: item.id,
-          event_id: item.event_id,
-          event_name: eventList.find((ev) => ev.id === item.event_id)?.name || `Evento ${item.event_id}`,
-          titular_name: item.titular_name,
-          titular_identification: item.titular_identification,
-          email: item.email,
-          phone: item.phone,
-          group_size: item.group_size,
-          status: item.status,
-          created_at: item.created_at,
-          companions: Array.isArray(item.companions) ? item.companions : [],
-          titular_selfie_url: item.titular_selfie_url,
-          titular_doc_url: item.titular_doc_url,
-          titular_approved: item.titular_approved ?? null,
-          titular_qr_token: item.titular_qr_token ?? null,
-          link: item.link ?? null,
-          token_plain: item.token_plain ?? null,
-        }));
-        setItems(mapped);
-      } catch (error: any) {
-        toast({
-          title: 'Error',
-          description: error?.message || 'No se pudieron cargar aprobaciones pendientes.',
-          variant: 'destructive',
-        });
-      }
-    };
-    load();
-  }, [toast]);
+  const eventsQuery = useQuery({
+    queryKey: ['events', 'all'],
+    queryFn: () => api.events.list({ limit: 2000 }),
+  });
+
+  const approvalsQuery = useQuery({
+    queryKey: ['pendingApprovals'],
+    queryFn: () => api.invitationGroups.pendingApprovals(),
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: (payload: { invitation_id: number; participants: any[] }) =>
+      api.invitationGroups.approve(payload),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['pendingApprovals'] });
+      await queryClient.invalidateQueries({ queryKey: ['invitationGroups'] });
+    },
+  });
+
+  const requestUpdateMutation = useMutation({
+    mutationFn: (payload: { invitation_id: number; reason?: string; participants: any[] }) =>
+      api.invitationGroups.requestUpdate(payload.invitation_id, {
+        reason: payload.reason,
+        participants: payload.participants,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['pendingApprovals'] });
+      await queryClient.invalidateQueries({ queryKey: ['invitationGroups'] });
+    },
+  });
+
+  const events = eventsQuery.data?.items || [];
+  const eventNameById = useMemo(
+    () => new Map(events.map((ev) => [ev.id, ev.name])),
+    [events]
+  );
+
+  const items: ApprovalItem[] = useMemo(() => {
+    const pendingRes = approvalsQuery.data || [];
+    return pendingRes.map((item: any) => ({
+      id: item.id,
+      event_id: item.event_id,
+      event_name: eventNameById.get(item.event_id) || `Evento ${item.event_id}`,
+      titular_name: item.titular_name,
+      titular_identification: item.titular_identification,
+      email: item.email,
+      phone: item.phone,
+      group_size: item.group_size,
+      status: item.status,
+      created_at: item.created_at,
+      companions: Array.isArray(item.companions) ? item.companions : [],
+      titular_selfie_url: item.titular_selfie_url,
+      titular_doc_url: item.titular_doc_url,
+      titular_approved: item.titular_approved ?? null,
+      titular_qr_token: item.titular_qr_token ?? null,
+      link: item.link ?? null,
+      token_plain: item.token_plain ?? null,
+    }));
+  }, [approvalsQuery.data, eventNameById]);
 
     const getParticipants = (item: ApprovalItem): Participant[] => {
     const participants: Participant[] = [
@@ -324,22 +344,10 @@ export default function PendingApprovals2() {
         return false;
       }
 
-      const response = await api.invitationGroups.approve({
+      await approveMutation.mutateAsync({
         invitation_id: item.id,
         participants,
       });
-      const nextStatus = normalizeStatus(response?.status);
-      if (
-        nextStatus === 'pendiente aprobacion' ||
-        nextStatus === 'pendiente aprobación' ||
-        nextStatus === 'aprobado parcial'
-      ) {
-        setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, status: response?.status || i.status } : i))
-        );
-      } else {
-        setItems((prev) => prev.filter((i) => i.id !== item.id));
-      }
       toast({
         title: 'Aprobado',
         description: 'Aprobación aplicada. Se enviará el QR a los seleccionados.',
@@ -374,22 +382,10 @@ export default function PendingApprovals2() {
         });
         return;
       }
-      const response = await api.invitationGroups.approve({
+      await approveMutation.mutateAsync({
         invitation_id: selected.id,
         participants,
       });
-      const nextStatus = normalizeStatus(response?.status);
-      if (
-        nextStatus === 'pendiente aprobacion' ||
-        nextStatus === 'pendiente aprobación' ||
-        nextStatus === 'aprobado parcial'
-      ) {
-        setItems((prev) =>
-          prev.map((i) => (i.id === selected.id ? { ...i, status: response?.status || i.status } : i))
-        );
-      } else {
-        setItems((prev) => prev.filter((i) => i.id !== selected.id));
-      }
       setRejectOpen(false);
       setDialogOpen(false);
       setReason('');
@@ -445,31 +441,11 @@ export default function PendingApprovals2() {
 
     try {
       setIsUpdating(true);
-      const response = await api.invitationGroups.requestUpdate(updateTarget.id, {
+      await requestUpdateMutation.mutateAsync({
+        invitation_id: updateTarget.id,
         reason: updateReason.trim() || undefined,
         participants,
       });
-      const updated: ApprovalItem = {
-        id: response.id,
-        event_id: response.event_id,
-        event_name: events.find((ev) => ev.id === response.event_id)?.name || updateTarget.event_name,
-        titular_name: response.titular_name,
-        titular_identification: response.titular_identification,
-        email: response.email,
-        phone: response.phone,
-        group_size: response.group_size,
-        status: response.status,
-        created_at: response.created_at,
-        companions: Array.isArray(response.companions) ? response.companions : [],
-        titular_selfie_url: response.titular_selfie_url,
-        titular_doc_url: response.titular_doc_url,
-        titular_approved: response.titular_approved ?? null,
-        titular_qr_token: response.titular_qr_token ?? null,
-        link: response.link ?? null,
-        token_plain: response.token_plain ?? null,
-      };
-
-      setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
       setUpdateOpen(false);
       setUpdateTarget(null);
       setUpdateReason('');

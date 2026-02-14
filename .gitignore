@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# Node / frontend
+node_modules/
+frontend/.pnpm-store/
+frontend/package-lock.json
+
+# Builds
+dist/
+build/
+
+# Uploads / media (recomendado NO subirlos)
+backend/uploads/
+
+# Nested repo / duplicate
+EventsAdmg/
+
+# OS
+.DS_Store
+Thumbs.db

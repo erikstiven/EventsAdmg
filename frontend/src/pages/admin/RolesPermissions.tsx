@@ -33,6 +33,16 @@ type PermissionItem = {
 const MODULE_ORDER = ['APPROVALS', 'CHECKIN', 'EVENTS', 'INVITATIONS', 'ATTENDEES', 'STAFF', 'AUDIT'];
 const SENSITIVE_EXACT = new Set(['approvals.decide', 'checkin.manual_approve']);
 
+const MODULE_LABELS: Record<string, string> = {
+  APPROVALS: 'Aprobaciones',
+  CHECKIN: 'Control de acceso',
+  EVENTS: 'Eventos',
+  INVITATIONS: 'Invitaciones',
+  ATTENDEES: 'Asistentes',
+  STAFF: 'Personal',
+  AUDIT: 'Auditoría',
+};
+
 function cloneSelected(source: Record<number, Set<string>>) {
   const copy: Record<number, Set<string>> = {};
   Object.entries(source).forEach(([roleId, perms]) => {
@@ -43,6 +53,27 @@ function cloneSelected(source: Record<number, Set<string>>) {
 
 function isSensitivePermission(code: string) {
   return code.endsWith('.delete') || SENSITIVE_EXACT.has(code);
+}
+
+function buildDependencyMap(selectedSet: Set<string>) {
+  const required = new Map<string, Set<string>>();
+
+  const require = (dep: string, src: string) => {
+    if (!required.has(dep)) required.set(dep, new Set());
+    required.get(dep)!.add(src);
+  };
+
+  selectedSet.forEach((code) => {
+    if (code.endsWith('.update') || code.endsWith('.delete')) {
+      const resource = code.split('.')[0];
+      require(`${resource}.read`, code);
+    }
+    if (code === 'approvals.decide') require('approvals.read', code);
+    if (code === 'checkin.biometric') require('checkin.scan', code);
+    if (code === 'checkin.manual_approve') require('checkin.scan', code);
+  });
+
+  return required;
 }
 
 export default function RolesPermissions() {
@@ -141,6 +172,11 @@ export default function RolesPermissions() {
   const permissionsByModule = useMemo(() => {
     return grouped.map(([module, perms]) => [module, perms.filter((p) => !isSensitivePermission(p.code))] as const);
   }, [grouped]);
+
+  const dependencyMap = useMemo(() => {
+    if (!activeRole) return new Map<string, Set<string>>();
+    return buildDependencyMap(selected[activeRole.id] || new Set());
+  }, [activeRole, selected]);
 
   const togglePermission = (roleId: number, permissionCode: string, checked: boolean) => {
     if (checked && isSensitivePermission(permissionCode)) {
@@ -345,36 +381,64 @@ export default function RolesPermissions() {
                   </div>
                 )}
 
-                <Card className="border-amber-300">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <AlertTriangle className="h-4 w-4 text-amber-600" />
-                      Permisos críticos
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {criticalPermissions.map((perm) => (
-                      <div key={`critical-${perm.code}`} className="flex items-start justify-between gap-3 border rounded-md p-3">
-                        <div>
-                          <div className="font-medium">{perm.name}</div>
-                          <div className="text-xs text-gray-500">{perm.code}</div>
-                        </div>
-                        <Checkbox
-                          checked={selected[activeRole.id]?.has(perm.code) || false}
-                          onCheckedChange={(v) => togglePermission(activeRole.id, perm.code, Boolean(v))}
-                          disabled={saving || isAdminRole}
-                        />
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-
                 <Accordion type="multiple" className="w-full border rounded-md px-4">
+                  <AccordionItem value="critical">
+                    <AccordionTrigger className="hover:no-underline">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="h-4 w-4 text-amber-600" />
+                        <span>Permisos críticos</span>
+                        <Badge variant="outline">{criticalPermissions.length}</Badge>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-3">
+                      {criticalPermissions.map((perm) => {
+                        const isChecked = selected[activeRole.id]?.has(perm.code) || false;
+                        const deps = dependencyMap.get(perm.code);
+                        const depSources = deps ? Array.from(deps).join(', ') : '';
+                        const isRequired = Boolean(deps?.size);
+                        return (
+                          <div
+                            key={`critical-${perm.code}`}
+                            className="flex items-start justify-between gap-3 border rounded-md p-3"
+                          >
+                            <div>
+                              <div className="font-medium flex items-center gap-2">
+                                {perm.name}
+                                {isRequired && (
+                                  <Badge variant="secondary">Requerido</Badge>
+                                )}
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="outline" className="cursor-help">Info</Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>{perm.description || perm.code}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
+                              <div className="text-xs text-gray-500">{perm.code}</div>
+                              {isRequired && (
+                                <div className="text-xs text-amber-600">
+                                  Requerido por: {depSources}
+                                </div>
+                              )}
+                            </div>
+                            <Checkbox
+                              checked={isChecked}
+                              onCheckedChange={(v) => togglePermission(activeRole.id, perm.code, Boolean(v))}
+                              disabled={saving || isAdminRole || (isRequired && isChecked)}
+                            />
+                          </div>
+                        );
+                      })}
+                    </AccordionContent>
+                  </AccordionItem>
+
                   {permissionsByModule.map(([moduleName, perms]) => (
                     <AccordionItem key={`module-${moduleName}`} value={moduleName}>
                       <AccordionTrigger className="hover:no-underline">
                         <div className="flex items-center gap-2">
-                          <span>{moduleName}</span>
+                          <span>{MODULE_LABELS[moduleName] || moduleName}</span>
                           <Badge variant="outline">{perms.length}</Badge>
                         </div>
                       </AccordionTrigger>
@@ -406,13 +470,25 @@ export default function RolesPermissions() {
                                       <p>{perm.description || perm.code}</p>
                                     </TooltipContent>
                                   </Tooltip>
+                                  {dependencyMap.has(perm.code) && (
+                                    <Badge variant="secondary">Requerido</Badge>
+                                  )}
                                 </div>
                                 <div className="text-xs text-gray-500">{perm.code}</div>
+                                {dependencyMap.has(perm.code) && (
+                                  <div className="text-xs text-amber-600">
+                                    Requerido por: {Array.from(dependencyMap.get(perm.code) || []).join(', ')}
+                                  </div>
+                                )}
                               </div>
                               <Checkbox
                                 checked={selected[activeRole.id]?.has(perm.code) || false}
                                 onCheckedChange={(v) => togglePermission(activeRole.id, perm.code, Boolean(v))}
-                                disabled={saving || isAdminRole}
+                                disabled={
+                                  saving ||
+                                  isAdminRole ||
+                                  (dependencyMap.has(perm.code) && selected[activeRole.id]?.has(perm.code))
+                                }
                               />
                             </div>
                           ))}
