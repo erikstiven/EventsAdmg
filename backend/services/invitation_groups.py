@@ -70,9 +70,9 @@ class InvitationGroupsService:
         obj.status = canonical
 
     @staticmethod
-    def _build_link(token_plain: str) -> str:
-        base_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
-        return f"{base_url}/registro/{token_plain}"
+    def _build_link(token_plain: str, base_url: Optional[str] = None) -> str:
+        resolved_base_url = (base_url or os.environ.get("FRONTEND_URL") or "http://localhost:3000").strip().rstrip("/")
+        return f"{resolved_base_url}/registro/{token_plain}"
 
     @staticmethod
     def _generate_token() -> tuple[str, str]:
@@ -80,11 +80,13 @@ class InvitationGroupsService:
         token_hash = hashlib.sha256(token_plain.encode("utf-8")).hexdigest()
         return token_plain, token_hash
 
-    async def create(self, data: Dict[str, Any], user_id: str) -> Optional[Invitation_groups]:
+    async def create(
+        self, data: Dict[str, Any], user_id: str, frontend_base_url: Optional[str] = None
+    ) -> Optional[Invitation_groups]:
         try:
             now = datetime.now(timezone.utc)
             token_plain, token_hash = self._generate_token()
-            link = self._build_link(token_plain)
+            link = self._build_link(token_plain, base_url=frontend_base_url)
 
             companions = data.get("companions") or []
             await self._validate_unique_ids_for_event(

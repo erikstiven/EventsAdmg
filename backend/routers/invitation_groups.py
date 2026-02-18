@@ -1,9 +1,11 @@
 import logging
 import logging
+import os
 from datetime import datetime
 from typing import List, Optional
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
 from pathlib import Path
 from pydantic import BaseModel
@@ -25,6 +27,27 @@ from sqlalchemy import select
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/invitation-groups", tags=["invitation_groups"])
+
+
+def get_dynamic_frontend_url(request: Request) -> str:
+    origin = request.headers.get("origin")
+    if origin:
+        return origin.rstrip("/")
+
+    referer = request.headers.get("referer")
+    if referer:
+        parsed = urlparse(referer)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    forwarded_host = request.headers.get("x-forwarded-host")
+    host = request.headers.get("host")
+    effective_host = forwarded_host or host
+    if effective_host:
+        return f"{scheme}://{effective_host}"
+
+    return (os.environ.get("FRONTEND_URL") or "http://localhost:3000").rstrip("/")
 
 # Serve uploaded files (dev only)
 @router.get("/public/files/{filename}")
@@ -223,6 +246,7 @@ async def _serialize_invitation_group(item, service: InvitationGroupsService) ->
 
 @router.post("", response_model=InvitationGroupResponse, status_code=201)
 async def create_invitation_group(
+    request: Request,
     data: InvitationGroupData,
     current_user: UserResponse = Depends(get_current_user),
     _perm: UserResponse = Depends(require_any_permission("invitations.create")),
@@ -231,8 +255,13 @@ async def create_invitation_group(
     """Create a new invitation group"""
     logger.debug(f"Creating invitation group with data: {data}")
     service = InvitationGroupsService(db)
+    frontend_base_url = get_dynamic_frontend_url(request)
     try:
-        result = await service.create(data.model_dump(), user_id=str(current_user.id))
+        result = await service.create(
+            data.model_dump(),
+            user_id=str(current_user.id),
+            frontend_base_url=frontend_base_url,
+        )
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create invitation group")
         return await _serialize_invitation_group(result, service)
