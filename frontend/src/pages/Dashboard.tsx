@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContextSimple';
 import { Layout } from '@/components/Layout';
+import LoadingSpinner from '@/components/LoadingSpinner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,11 +30,7 @@ export default function Dashboard() {
   }, [user, isLoading, navigate]);
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
+    return <LoadingSpinner message="Cargando panel..." />;
   }
 
   const userPermissions = new Set((user?.permissions || []).map((p) => p.toLowerCase()));
@@ -99,8 +96,8 @@ export default function Dashboard() {
     if (role === 'ADMIN') {
       items.push(
         {
-          title: 'Configuración de correo',
-          description: 'Configurar envío y plantilla de correos',
+          title: 'Configuración del sistema',
+          description: 'Configurar biometría, envío y plantillas de correo',
           icon: Mail,
           path: '/admin/email-settings',
           color: 'bg-indigo-500',
@@ -194,8 +191,8 @@ export default function Dashboard() {
             color: 'bg-sky-700',
           },
           {
-            title: 'Configuración de correo',
-            description: 'Configurar envío y plantilla de correos',
+            title: 'Configuración del sistema',
+            description: 'Configurar biometría, envío y plantillas de correo',
             icon: Mail,
             path: '/admin/email-settings',
             color: 'bg-indigo-500',

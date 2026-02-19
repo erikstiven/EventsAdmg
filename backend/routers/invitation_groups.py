@@ -75,6 +75,20 @@ class InvitationGroupData(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+class InvitationGroupEditData(BaseModel):
+    event_id: Optional[int] = None
+    titular_name: Optional[str] = None
+    titular_identification: Optional[str] = None
+    fingerprint_code: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    group_size: Optional[int] = None
+    send_email: Optional[bool] = None
+    send_email_cc: Optional[bool] = None
+    intransferible: Optional[bool] = None
+    companions: Optional[list[dict]] = None
+
+
 class InvitationGroupResponse(BaseModel):
     id: int
     event_id: int
@@ -270,6 +284,30 @@ async def create_invitation_group(
     except Exception as e:
         logger.error(f"Error creating invitation group: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.put("/{invitation_id}", response_model=InvitationGroupResponse)
+async def update_invitation_group(
+    request: Request,
+    invitation_id: int,
+    data: InvitationGroupEditData,
+    current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("invitations.update")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = InvitationGroupsService(db)
+    try:
+        result = await service.update_group(
+            invitation_id=invitation_id,
+            data=data.model_dump(exclude_unset=True),
+            user_id=str(current_user.id),
+            frontend_base_url=get_dynamic_frontend_url(request),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not result:
+        raise HTTPException(status_code=404, detail="Invitation group not found")
+    return await _serialize_invitation_group(result, service)
 
 
 @router.get("", response_model=InvitationGroupListResponse)

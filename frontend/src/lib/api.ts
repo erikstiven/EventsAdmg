@@ -335,6 +335,39 @@ export const api = {
       }
       return await res.json();
     },
+    update: async (
+      id: number,
+      data: {
+        event_id?: number;
+        titular_name?: string;
+        titular_identification?: string;
+        fingerprint_code?: string;
+        email?: string;
+        phone?: string;
+        group_size?: number;
+        send_email?: boolean;
+        send_email_cc?: boolean;
+        intransferible?: boolean;
+        companions?: Array<{
+          name: string;
+          cedula: string;
+          email: string;
+          telefono: string;
+          codigo: string;
+        }>;
+      }
+    ) => {
+      const res = await authSimple.fetch(`/api/v1/invitation-groups/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw { data: errData, message: 'Error al editar invitación por grupo' };
+      }
+      return await res.json();
+    },
     pendingApprovals: async () => {
       const res = await authSimple.fetch('/api/v1/invitation-groups/pending-approvals');
       if (!res.ok) throw new Error('Error al cargar aprobaciones pendientes');

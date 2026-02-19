@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Copy, Link as LinkIcon, Mail, CheckCircle2, Eye, ChevronLeft, ChevronRight, Plus, RotateCcw } from 'lucide-react';
+import { Copy, Link as LinkIcon, Mail, CheckCircle2, Eye, ChevronLeft, ChevronRight, Plus, RotateCcw, Pencil } from 'lucide-react';
 import { Box, Step, StepLabel, Stepper, useMediaQuery } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
@@ -19,6 +19,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { InfinitySpin } from 'react-loader-spinner';
 import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
@@ -88,11 +89,31 @@ export default function InvitationsByQuota() {
   const [companions, setCompanions] = useState<
     { name: string; cedula: string; email: string; telefono: string; codigo: string }[]
   >([]);
+
+  const resetInvitationForm = () => {
+    setActiveStep(0);
+    setEditingInvitationId(null);
+    setForm({
+      eventId: '',
+      titular: '',
+      cedula: '',
+      codigoDactilar: '',
+      email: '',
+      telefono: '',
+      cupoTotal: 3,
+      sendEmail: true,
+      sendEmailCc: false,
+      intransferible: true,
+    });
+    setCompanions([]);
+  };
   const [showSuccess, setShowSuccess] = useState(false);
   const [creating, setCreating] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailInvitation, setDetailInvitation] = useState<QuotaInvitation | null>(null);
+  const [editingInvitationId, setEditingInvitationId] = useState<number | null>(null);
+  const isEditing = editingInvitationId !== null;
   const [activeStep, setActiveStep] = useState(0);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupCompanionLoading, setLookupCompanionLoading] = useState<Record<number, boolean>>({});
@@ -260,7 +281,11 @@ export default function InvitationsByQuota() {
       const selectedEventId = Number(form.eventId);
       const existingIds = new Set<string>();
       invitations
-        .filter((inv) => inv.eventId === selectedEventId)
+        .filter((inv) => {
+          if (inv.eventId !== selectedEventId) return false;
+          if (isEditing && editingInvitationId && inv.rawId === editingInvitationId) return false;
+          return true;
+        })
         .forEach((inv) => {
           if (inv.titularCedula) existingIds.add(normalizeId(inv.titularCedula));
           (inv.companions || []).forEach((c) => {
@@ -287,7 +312,11 @@ export default function InvitationsByQuota() {
         });
         return;
       }
-      await createInvitation();
+      if (isEditing) {
+        await updateInvitation();
+      } else {
+        await createInvitation();
+      }
     } catch (error: any) {
       const message =
         error?.data?.detail ||
@@ -344,25 +373,51 @@ export default function InvitationsByQuota() {
       ]);
       setShowSuccess(true);
       setShowForm(false);
-      setActiveStep(0);
-      setForm({
-        eventId: '',
-        titular: '',
-        cedula: '',
-        codigoDactilar: '',
-        email: '',
-        telefono: '',
-        cupoTotal: 3,
-        sendEmail: true,
-        sendEmailCc: false,
-        intransferible: true,
-      });
-      setCompanions([]);
+      resetInvitationForm();
     } catch (error: any) {
       const message =
         error?.data?.detail ||
         error?.message ||
         'No se pudo crear la invitación por grupo';
+      toast({
+        title: 'Error',
+        description: message,
+        variant: 'destructive',
+      });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const updateInvitation = async () => {
+    if (!editingInvitationId) return;
+    try {
+      setCreating(true);
+      await api.invitationGroups.update(editingInvitationId, {
+        event_id: Number(form.eventId),
+        titular_name: form.titular,
+        titular_identification: form.cedula,
+        fingerprint_code: form.codigoDactilar,
+        email: form.email,
+        phone: form.telefono,
+        group_size: form.cupoTotal,
+        send_email: form.sendEmail,
+        send_email_cc: form.sendEmailCc,
+        intransferible: form.intransferible,
+        companions,
+      });
+      await fetchInvitations();
+      toast({
+        title: 'Invitación actualizada',
+        description: 'Se guardaron los cambios correctamente.',
+      });
+      setShowForm(false);
+      resetInvitationForm();
+    } catch (error: any) {
+      const message =
+        error?.data?.detail ||
+        error?.message ||
+        'No se pudo actualizar la invitación por grupo';
       toast({
         title: 'Error',
         description: message,
@@ -647,6 +702,13 @@ export default function InvitationsByQuota() {
   const canRequestUpdate = (estado: QuotaInvitation['estado']) =>
     estado === 'Aprobado' || estado === 'Aprobado parcial' || estado === 'Pendiente aprobación';
 
+  const canEditInvitation = (estado: QuotaInvitation['estado']) =>
+    estado === 'Pendiente completar' ||
+    estado === 'En registro' ||
+    estado === 'Pendiente de actualización' ||
+    estado === 'Pendiente aprobación' ||
+    estado === 'Rechazado';
+
   const openRequestUpdate = (invitation: QuotaInvitation) => {
     setReopenTarget(invitation);
     setReopenReason('');
@@ -684,6 +746,33 @@ export default function InvitationsByQuota() {
     }
   };
 
+  const openEditInForm = (inv: QuotaInvitation) => {
+    setEditingInvitationId(inv.rawId || null);
+    setForm({
+      eventId: inv.eventId ? String(inv.eventId) : '',
+      titular: inv.titular || '',
+      cedula: inv.titularCedula || '',
+      codigoDactilar: inv.titularCodigo || '',
+      email: inv.titularEmail || '',
+      telefono: inv.titularTelefono || '',
+      cupoTotal: inv.cupoTotal || 1,
+      sendEmail: true,
+      sendEmailCc: false,
+      intransferible: true,
+    });
+    setCompanions(
+      (inv.companions || []).map((c) => ({
+        name: c.name || '',
+        cedula: c.cedula || '',
+        email: c.email || '',
+        telefono: c.telefono || '',
+        codigo: c.codigo || '',
+      }))
+    );
+    setActiveStep(0);
+    setShowForm(true);
+  };
+
   return (
     <Layout>
       <div className="max-w-6xl mx-auto space-y-8">
@@ -719,7 +808,17 @@ export default function InvitationsByQuota() {
               <CardTitle>Invitaciones creadas</CardTitle>
               <p className="text-sm text-gray-600">Gestiona links y estados de las invitaciones por grupo.</p>
             </div>
-            <Button onClick={() => setShowForm((v) => !v)}>
+            <Button
+              onClick={() => {
+                if (showForm) {
+                  setShowForm(false);
+                  resetInvitationForm();
+                  return;
+                }
+                resetInvitationForm();
+                setShowForm(true);
+              }}
+            >
               <Plus className="h-4 w-4 mr-2" />
               {showForm ? 'Ocultar formulario' : 'Crear invitación'}
             </Button>
@@ -820,6 +919,17 @@ export default function InvitationsByQuota() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {canEditInvitation(inv.estado) && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Editar invitación"
+                            aria-label="Editar invitación"
+                            onClick={() => openEditInForm(inv)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        )}
                         <Button
                           size="icon"
                           variant="ghost"
@@ -945,12 +1055,23 @@ export default function InvitationsByQuota() {
           </CardContent>
         </Card>
 
-        <Dialog open={showForm} onOpenChange={setShowForm}>
+        <Dialog
+          open={showForm}
+          onOpenChange={(open) => {
+            setShowForm(open);
+            if (!open) resetInvitationForm();
+          }}
+        >
         <DialogContent className="w-[95vw] max-w-5xl max-h-[90vh] overflow-y-auto">
           <ModalHeader>
-            <ModalTitle>Nueva Invitación</ModalTitle>
+            <div className="flex items-center gap-2">
+              <ModalTitle>{isEditing ? 'Editar invitación' : 'Nueva Invitación'}</ModalTitle>
+              {isEditing && <Badge variant="outline">Modo edición</Badge>}
+            </div>
             <ModalDescription>
-              Completa los datos en pasos para generar el link del grupo.
+              {isEditing
+                ? 'Corrige los datos del grupo en los mismos pasos del registro.'
+                : 'Completa los datos en pasos para generar el link del grupo.'}
             </ModalDescription>
           </ModalHeader>
             <form onSubmit={(e) => e.preventDefault()} className="space-y-5 mt-2">
@@ -1087,6 +1208,12 @@ export default function InvitationsByQuota() {
                       </div>
                     </div>
                   </div>
+
+                  {isEditing && (
+                    <div className="md:col-span-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                      Al guardar cambios se generará un nuevo enlace automáticamente y el enlace anterior quedará inválido.
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1213,21 +1340,29 @@ export default function InvitationsByQuota() {
 
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div className="flex items-center gap-3">
-                  <Button type="button" variant="ghost" onClick={() => setShowForm(false)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setShowForm(false);
+                      resetInvitationForm();
+                    }}
+                    disabled={creating}
+                  >
                     Cancelar
                   </Button>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button type="button" variant="outline" onClick={goPrevStep} disabled={activeStep === 0}>
+                  <Button type="button" variant="outline" onClick={goPrevStep} disabled={activeStep === 0 || creating}>
                     Atrás
                   </Button>
                   {activeStep < steps.length - 1 ? (
                     <Button type="button" onClick={goNextStep} disabled={creating}>
-                      {creating ? 'Creando...' : 'Siguiente'}
+                      Siguiente
                     </Button>
                   ) : (
                     <Button type="button" className="w-fit" onClick={handleCreate} disabled={creating}>
-                      {creating ? 'Creando...' : 'Crear y generar link'}
+                      {isEditing ? 'Guardar cambios' : 'Crear y generar link'}
                     </Button>
                   )}
                 </div>
@@ -1274,128 +1409,154 @@ export default function InvitationsByQuota() {
       </Dialog>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="w-[95vw] max-w-5xl max-h-[90vh] overflow-y-auto">
-          <ModalHeader>
-            <ModalTitle>Detalle de invitación</ModalTitle>
-            <ModalDescription>Información en solo lectura de la invitación y sus personas.</ModalDescription>
-          </ModalHeader>
-          {detailInvitation && (
-            <div className="space-y-5 text-sm text-gray-700">
-              {(() => {
-                const companionsList = detailInvitation.companions || [];
-                const titularComplete = isPersonComplete(
-                  detailInvitation.titularSelfieUrl,
-                  detailInvitation.titularDocUrl
-                );
-                const companionsComplete = companionsList.filter((c: any) =>
-                  isPersonComplete(c?.selfie_url, c?.doc_url)
-                ).length;
-                const detailCupoUsed = (titularComplete ? 1 : 0) + companionsComplete;
-                const people = [
-                  {
-                    name: detailInvitation.titular,
-                    role: 'Titular',
-                    cedula: detailInvitation.titularCedula || '----',
-                    email: detailInvitation.titularEmail || '----',
-                    selfieUrl: detailInvitation.titularSelfieUrl,
-                    docUrl: detailInvitation.titularDocUrl,
-                  },
-                  ...companionsList.map((c: any) => ({
-                    name: c.name || 'Acompañante',
-                    role: 'Acompañante',
-                    cedula: c.cedula || '----',
-                    email: c.email || '----',
-                    selfieUrl: c.selfie_url,
-                    docUrl: c.doc_url,
-                  })),
-                ];
-                return (
-                  <>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Resumen</CardTitle>
-                </CardHeader>
-                <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <Label className="text-xs text-gray-500">Titular</Label>
-                    <Input value={detailInvitation.titular} disabled />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-gray-500">Evento</Label>
-                    <Input value={detailInvitation.event} disabled />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-gray-500">Cupos usados/total</Label>
-                    <Input value={`${detailCupoUsed}/${detailInvitation.cupoTotal}`} disabled />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-gray-500">Estado</Label>
-                    <Input value={statusLabel(detailInvitation.estado)} disabled />
-                  </div>
-                  <div className="md:col-span-2">
-                    <Label className="text-xs text-gray-500">Link</Label>
-                    <Input value={detailInvitation.link} disabled />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-gray-500">Intransferible</Label>
-                    <Input value="Sí" disabled />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-gray-500">Envío correo</Label>
-                    <Input value={detailInvitation.sent ? 'Enviado' : 'Pendiente'} disabled />
-                    {detailInvitation.emailSentAt && (
-                      <p className="text-xs text-gray-500 mt-1">
-                        Enviado: {formatSentAt(detailInvitation.emailSentAt)}
-                      </p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+        <DialogContent className="w-[95vw] max-w-5xl overflow-hidden p-0">
+          {detailInvitation && (() => {
+            const companionsList = detailInvitation.companions || [];
+            const titularComplete = isPersonComplete(
+              detailInvitation.titularSelfieUrl,
+              detailInvitation.titularDocUrl
+            );
+            const companionsComplete = companionsList.filter((c: any) =>
+              isPersonComplete(c?.selfie_url, c?.doc_url)
+            ).length;
+            const detailCupoUsed = (titularComplete ? 1 : 0) + companionsComplete;
+            const people = [
+              {
+                name: detailInvitation.titular,
+                role: 'Titular',
+                cedula: detailInvitation.titularCedula || '----',
+                email: detailInvitation.titularEmail || '----',
+                selfieUrl: detailInvitation.titularSelfieUrl,
+                docUrl: detailInvitation.titularDocUrl,
+              },
+              ...companionsList.map((c: any) => ({
+                name: c.name || 'Acompañante',
+                role: 'Acompañante',
+                cedula: c.cedula || '----',
+                email: c.email || '----',
+                selfieUrl: c.selfie_url,
+                docUrl: c.doc_url,
+              })),
+            ];
+            const statusText = statusLabel(detailInvitation.estado);
+            const sentText = detailInvitation.sent ? 'Enviado' : 'Pendiente';
 
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Personas registradas</CardTitle>
-                  <p className="text-xs text-gray-500">Titular y acompañantes, solo lectura.</p>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {people.map((c, idx) => {
-                    const complete = isPersonComplete(c.selfieUrl, c.docUrl);
-                    const statusText = complete ? 'Completo' : 'Pendiente completar';
-                    return (
-                    <div key={idx} className="grid grid-cols-1 md:grid-cols-5 gap-2 border rounded-md p-3 bg-slate-50 text-xs md:text-sm">
-                      <div className="md:col-span-2">
-                        <div className="text-gray-500">Nombre</div>
-                        <div className="font-medium">{c.name}</div>
-                        <div className="text-gray-500">{c.role}</div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Cédula</div>
-                        <div>{c.cedula}</div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Correo</div>
-                        <div className="truncate">{c.email}</div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Estado registro</div>
-                        <Badge variant={complete ? 'default' : 'outline'}>{statusText}</Badge>
-                      </div>
-                    </div>
-                  );
-                  })}
-                </CardContent>
-              </Card>
-                  </>
-                );
-              })()}
+            return (
+              <div className="flex max-h-[90vh] flex-col">
+                <ModalHeader className="border-b px-6 py-4">
+                  <ModalTitle>Detalle de invitación</ModalTitle>
+                  <ModalDescription>Información en solo lectura de la invitación y sus personas.</ModalDescription>
+                </ModalHeader>
 
-              <div className="flex justify-end">
-                <Button variant="ghost" onClick={() => setDetailOpen(false)}>
-                  Cerrar
-                </Button>
+                <div className="space-y-5 overflow-y-auto px-6 py-5 text-sm text-slate-700">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline">ID: {detailInvitation.id}</Badge>
+                    <Badge variant="outline">Cupos: {detailCupoUsed}/{detailInvitation.cupoTotal}</Badge>
+                    <Badge variant={detailInvitation.sent ? 'default' : 'outline'}>{sentText}</Badge>
+                  </div>
+
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Resumen</CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-slate-500">Titular</p>
+                        <div className="rounded-md border bg-slate-50 px-3 py-2">{detailInvitation.titular || '----'}</div>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-slate-500">Evento</p>
+                        <div className="rounded-md border bg-slate-50 px-3 py-2">{detailInvitation.event || '----'}</div>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-slate-500">Estado</p>
+                        <div className="flex h-[42px] items-center rounded-md border bg-slate-50 px-3">
+                          <Badge variant={detailInvitation.estado === 'Aprobado' ? 'default' : 'outline'}>{statusText}</Badge>
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-slate-500">Intransferible</p>
+                        <div className="rounded-md border bg-slate-50 px-3 py-2">Sí</div>
+                      </div>
+                      <div className="space-y-1 md:col-span-2">
+                        <p className="text-xs font-medium text-slate-500">Link de registro</p>
+                        <div className="flex flex-col gap-2 rounded-md border bg-slate-50 p-2 sm:flex-row sm:items-center sm:justify-between">
+                          <p className="min-w-0 truncate px-1 text-slate-700" title={detailInvitation.link}>
+                            {detailInvitation.link}
+                          </p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 shrink-0"
+                            onClick={() => handleCopy(detailInvitation.link)}
+                          >
+                            <Copy className="mr-2 h-3.5 w-3.5" />
+                            Copiar
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="space-y-1 md:col-span-2">
+                        <p className="text-xs font-medium text-slate-500">Correo</p>
+                        <div className="rounded-md border bg-slate-50 px-3 py-2">
+                          <span className="font-medium">{sentText}</span>
+                          {detailInvitation.emailSentAt && (
+                            <span className="ml-2 text-xs text-slate-500">
+                              ({formatSentAt(detailInvitation.emailSentAt)})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Personas registradas</CardTitle>
+                      <p className="text-xs text-slate-500">Titular y acompañantes en modo lectura.</p>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {people.map((c, idx) => {
+                        const complete = isPersonComplete(c.selfieUrl, c.docUrl);
+                        return (
+                          <div key={`${c.role}-${idx}`} className="rounded-lg border bg-slate-50 p-3">
+                            <div className="grid grid-cols-1 gap-2 text-sm md:grid-cols-12 md:items-center">
+                              <div className="md:col-span-4">
+                                <p className="text-xs text-slate-500">Nombre</p>
+                                <p className="font-medium text-slate-900">{c.name}</p>
+                                <p className="text-xs text-slate-500">{c.role}</p>
+                              </div>
+                              <div className="md:col-span-3">
+                                <p className="text-xs text-slate-500">Cédula</p>
+                                <p>{c.cedula}</p>
+                              </div>
+                              <div className="md:col-span-3">
+                                <p className="text-xs text-slate-500">Correo</p>
+                                <p className="truncate" title={c.email}>{c.email}</p>
+                              </div>
+                              <div className="md:col-span-2">
+                                <p className="text-xs text-slate-500">Estado</p>
+                                <Badge variant={complete ? 'default' : 'outline'}>
+                                  {complete ? 'Completo' : 'Pendiente'}
+                                </Badge>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 border-t px-6 py-4">
+                  <Button variant="outline" onClick={() => handleCopy(detailInvitation.link)}>
+                    <Copy className="mr-2 h-4 w-4" />
+                    Copiar link
+                  </Button>
+                  <Button onClick={() => setDetailOpen(false)}>Cerrar</Button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </DialogContent>
       </Dialog>
 
@@ -1425,8 +1586,9 @@ export default function InvitationsByQuota() {
           <AlertDialogHeader>
             <AlertDialogTitle>Creando invitación...</AlertDialogTitle>
           </AlertDialogHeader>
-          <div className="text-sm text-gray-600">
-            Estamos generando el link y enviando el correo si aplica. Por favor espera.
+          <div className="py-2 flex flex-col items-center gap-3 text-sm text-gray-600">
+            <InfinitySpin width="160" color="#1d4ed8" />
+            <p>Estamos generando el link y enviando el correo si aplica. Por favor espera.</p>
           </div>
         </AlertDialogContent>
       </AlertDialog>

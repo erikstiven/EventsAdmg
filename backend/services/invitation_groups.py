@@ -137,6 +137,173 @@ class InvitationGroupsService:
             logger.error(f"Error creating invitation group: {str(e)}")
             raise
 
+    async def update_group(
+        self,
+        invitation_id: int,
+        data: Dict[str, Any],
+        user_id: str,
+        frontend_base_url: Optional[str] = None,
+    ) -> Optional[Invitation_groups]:
+        result = await self.db.execute(select(Invitation_groups).where(Invitation_groups.id == invitation_id))
+        obj = result.scalar_one_or_none()
+        if not obj:
+            return None
+
+        current_status = self._status_label(obj, default="Pendiente completar")
+        editable_statuses = {
+            "Pendiente completar",
+            "En registro",
+            "Pendiente aprobación",
+            "Pendiente de actualización",
+            "Rechazado",
+        }
+        if current_status not in editable_statuses:
+            raise ValueError(
+                "La invitación no se puede editar en el estado actual. Usa 'Habilitar actualización'."
+            )
+
+        existing_companions = await self._load_companions(obj)
+        companions = data.get("companions")
+        if companions is None:
+            companions = existing_companions
+
+        target_event_id = data.get("event_id", obj.event_id)
+        target_group_size = int(data.get("group_size", obj.group_size))
+        if target_group_size < 1:
+            raise ValueError("El cupo total debe ser mayor o igual a 1.")
+        if len(companions or []) > max(0, target_group_size - 1):
+            raise ValueError("La cantidad de acompañantes excede el cupo total configurado.")
+
+        old_titular_name = (obj.titular_name or "").strip().lower()
+        old_titular_id = (obj.titular_identification or "").strip().lower()
+        new_titular_name = str(data.get("titular_name", obj.titular_name) or "").strip().lower()
+        new_titular_id = str(data.get("titular_identification", obj.titular_identification) or "").strip().lower()
+
+        await self._validate_unique_ids_for_event(
+            event_id=target_event_id,
+            titular_id=data.get("titular_identification", obj.titular_identification),
+            companions=companions or [],
+            ignore_invitation_id=obj.id,
+        )
+
+        previous_status_id = obj.status_id or invitation_group_status_id_from_label(
+            current_status, default="Pendiente completar"
+        )
+
+        event_changed = target_event_id != obj.event_id
+        group_size_changed = target_group_size != obj.group_size
+        titular_identity_changed = (old_titular_id != new_titular_id) or (old_titular_name != new_titular_name)
+        flags_changed = any(
+            k in data for k in ("send_email", "send_email_cc", "intransferible")
+        )
+
+        changed_fields: list[str] = []
+        for field in (
+            "event_id",
+            "titular_name",
+            "titular_identification",
+            "fingerprint_code",
+            "email",
+            "phone",
+            "group_size",
+            "send_email",
+            "send_email_cc",
+            "intransferible",
+            "companions",
+        ):
+            if field in data:
+                changed_fields.append(field)
+
+        obj.titular_name = data.get("titular_name", obj.titular_name)
+        obj.titular_identification = data.get("titular_identification", obj.titular_identification)
+        obj.fingerprint_code = data.get("fingerprint_code", obj.fingerprint_code)
+        obj.email = data.get("email", obj.email)
+        obj.phone = data.get("phone", obj.phone)
+        obj.event_id = target_event_id
+        obj.group_size = target_group_size
+        obj.send_email = bool(data.get("send_email", obj.send_email))
+        obj.send_email_cc = bool(data.get("send_email_cc", obj.send_email_cc))
+        obj.intransferible = bool(data.get("intransferible", obj.intransferible))
+        obj.updated_at = datetime.now(timezone.utc)
+
+        companion_identity_changed = False
+        for idx, comp in enumerate(companions or []):
+            old = existing_companions[idx] if idx < len(existing_companions) else {}
+            if not isinstance(old, dict):
+                old = {}
+            old_name = str(old.get("name") or "").strip().lower()
+            old_id = str(old.get("cedula") or "").strip().lower()
+            new_name = str(comp.get("name") or "").strip().lower()
+            new_id = str(comp.get("cedula") or "").strip().lower()
+            if old_name != new_name or old_id != new_id:
+                companion_identity_changed = True
+                comp["selfie_url"] = None
+                comp["doc_url"] = None
+                comp["approved"] = None
+                comp["rejection_reason"] = None
+                comp["qr_token"] = None
+                comp["qr_sent_at"] = None
+
+        sensitive_change = bool(
+            event_changed or group_size_changed or titular_identity_changed or companion_identity_changed
+        )
+
+        if titular_identity_changed:
+            obj.titular_selfie_url = None
+            obj.titular_doc_url = None
+            obj.titular_approved = None
+            obj.titular_rejection_reason = None
+            obj.titular_qr_token = None
+            obj.titular_qr_sent_at = None
+
+        if sensitive_change:
+            obj.titular_approved = None
+            obj.titular_rejection_reason = None
+            obj.titular_qr_token = None
+            obj.titular_qr_sent_at = None
+            companions = [
+                {
+                    **comp,
+                    "approved": None,
+                    "rejection_reason": None,
+                    "qr_token": None,
+                    "qr_sent_at": None,
+                }
+                for comp in (companions or [])
+            ]
+
+        await self._replace_companions(obj.id, companions or [])
+
+        regenerate_link = True
+        token_plain, token_hash = self._generate_token()
+        obj.token_plain = token_plain
+        obj.token = token_hash
+        obj.link = self._build_link(token_plain, base_url=frontend_base_url)
+        obj.email_sent_at = None
+
+        # If it was waiting decision or had sensitive change, move to update pending.
+        if current_status == "Pendiente aprobación" or sensitive_change:
+            self._set_status(obj, "Pendiente de actualización")
+
+        await self._record_status_change(
+            invitation_group_id=obj.id,
+            from_status_id=previous_status_id,
+            to_status_id=obj.status_id,
+            changed_by=user_id,
+            payload={
+                "action": "admin_edit",
+                "changed_fields": changed_fields,
+                "sensitive_change": sensitive_change,
+                "flags_changed": flags_changed,
+                "regenerated_link": True,
+            },
+        )
+
+        await self.db.commit()
+        await self.db.refresh(obj)
+
+        return obj
+
     async def _send_email_if_needed(self, obj: Invitation_groups, companions: list[dict]) -> bool:
         if not obj.send_email:
             return False

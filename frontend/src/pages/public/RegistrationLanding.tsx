@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
-import { Camera, Upload, CheckCircle2, AlertTriangle, User, Hourglass, Link as LinkIcon } from 'lucide-react';
+import { Camera, Upload, CheckCircle2, AlertTriangle, User, Hourglass, Loader2, Link as LinkIcon } from 'lucide-react';
 import {
   BaseModal,
   BaseModalBody,
@@ -161,24 +161,7 @@ export default function RegistrationLanding() {
 
   useEffect(() => {
     if (!showBio) return;
-    const startCamera = async () => {
-      try {
-        setCameraError('');
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
-          audio: false,
-        });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-          setCameraActive(true);
-        }
-      } catch (error: any) {
-        setCameraError(error?.message || 'No se pudo acceder a la cámara.');
-        setCameraActive(false);
-      }
-    };
-    startCamera();
+    void startSelfieCamera();
     return () => {
       if (videoRef.current?.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
@@ -186,29 +169,13 @@ export default function RegistrationLanding() {
         videoRef.current.srcObject = null;
       }
       setCameraActive(false);
+      setCameraError('');
     };
   }, [showBio]);
 
   useEffect(() => {
     if (!showDoc) return;
-    const startDocCamera = async () => {
-      try {
-        setDocCameraError('');
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' },
-          audio: false,
-        });
-        if (docVideoRef.current) {
-          docVideoRef.current.srcObject = stream;
-          await docVideoRef.current.play();
-          setDocCameraActive(true);
-        }
-      } catch (error: any) {
-        setDocCameraError(error?.message || 'No se pudo acceder a la cámara.');
-        setDocCameraActive(false);
-      }
-    };
-    startDocCamera();
+    void startDocCamera();
     return () => {
       if (docVideoRef.current?.srcObject) {
         const stream = docVideoRef.current.srcObject as MediaStream;
@@ -216,6 +183,7 @@ export default function RegistrationLanding() {
         docVideoRef.current.srcObject = null;
       }
       setDocCameraActive(false);
+      setDocCameraError('');
     };
   }, [showDoc]);
 
@@ -242,6 +210,24 @@ export default function RegistrationLanding() {
     return '';
   };
 
+  const startSelfieCamera = async () => {
+    try {
+      setCameraError('');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user' },
+        audio: false,
+      });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        setCameraActive(true);
+      }
+    } catch (error: any) {
+      setCameraError(error?.message || 'No se pudo acceder a la cámara.');
+      setCameraActive(false);
+    }
+  };
+
   const captureSelfieFromCamera = async () => {
     if (!videoRef.current) return;
     const video = videoRef.current;
@@ -262,6 +248,18 @@ export default function RegistrationLanding() {
     setSelectedSelfiePreview(URL.createObjectURL(blob));
   };
 
+  const resetSelfieSelection = () => {
+    setSelfieBlob(null);
+    setSelectedSelfieName('');
+    setSelectedSelfiePreview('');
+    if (selfieInputRef.current) {
+      selfieInputRef.current.value = '';
+    }
+    if (!cameraActive) {
+      void startSelfieCamera();
+    }
+  };
+
   const captureDocFromCamera = async () => {
     if (!docVideoRef.current) return;
     const video = docVideoRef.current;
@@ -280,6 +278,36 @@ export default function RegistrationLanding() {
     setDocBlob(blob);
     setSelectedDocName(`cedula-${Date.now()}.jpg`);
     setSelectedDocPreview(URL.createObjectURL(blob));
+  };
+
+  const startDocCamera = async () => {
+    try {
+      setDocCameraError('');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+        audio: false,
+      });
+      if (docVideoRef.current) {
+        docVideoRef.current.srcObject = stream;
+        await docVideoRef.current.play();
+        setDocCameraActive(true);
+      }
+    } catch (error: any) {
+      setDocCameraError(error?.message || 'No se pudo acceder a la cámara.');
+      setDocCameraActive(false);
+    }
+  };
+
+  const resetDocSelection = () => {
+    setDocBlob(null);
+    setSelectedDocName('');
+    setSelectedDocPreview('');
+    if (docInputRef.current) {
+      docInputRef.current.value = '';
+    }
+    if (!docCameraActive) {
+      void startDocCamera();
+    }
   };
 
   const markDoc = (idx: number, docName?: string, docUrl?: string) => {
@@ -551,14 +579,20 @@ export default function RegistrationLanding() {
         </BaseModalContent>
       </BaseModal>
 
-      <BaseModal open={showBio} onOpenChange={setShowBio}>
-        <BaseModalContent size="md" blur>
+      <BaseModal
+        open={showBio}
+        onOpenChange={(open) => {
+          if (savingSelfie) return;
+          setShowBio(open);
+        }}
+      >
+        <BaseModalContent size="md" blur className="sm:max-w-[620px]">
           <BaseModalHeader>
             <BaseModalTitle>Registrar rostro</BaseModalTitle>
           </BaseModalHeader>
-          <BaseModalBody className="space-y-4 text-sm text-gray-700">
-            <p>Escanea tu rostro con la cámara y captura una foto clara.</p>
-            <div className="relative w-full aspect-square max-h-[320px] sm:max-h-[420px] overflow-hidden rounded-xl bg-black">
+          <BaseModalBody className="space-y-5 overflow-y-auto pr-1 text-sm text-slate-700 sm:overflow-y-visible sm:pr-0">
+            <p className="text-base text-slate-600">Escanea tu rostro con la cámara y captura una foto clara.</p>
+            <div className="relative w-full aspect-[4/3] max-h-[260px] overflow-hidden rounded-xl bg-black sm:max-h-[340px]">
               {selectedSelfiePreview ? (
                 <img
                   src={selectedSelfiePreview}
@@ -589,24 +623,54 @@ export default function RegistrationLanding() {
               )}
             </div>
             {!selectedSelfiePreview && (
-              <div className="text-xs text-slate-500">
+              <div className="text-sm text-slate-600">
                 Alinea tu rostro dentro del círculo y mantén la mirada al frente.
               </div>
             )}
-            {cameraError && (
-              <div className="text-xs text-amber-600">{cameraError}</div>
+            {selectedSelfiePreview && (
+              <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-sm text-slate-700">
+                  Vista previa cargada. Puedes reemplazarla capturando o subiendo una nueva imagen.
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-9 px-3 text-sm"
+                  onClick={resetSelfieSelection}
+                  disabled={savingSelfie || locked}
+                >
+                  Tomar de nuevo
+                </Button>
+              </div>
             )}
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {cameraError && (
+              <div className="text-sm text-amber-600">{cameraError}</div>
+            )}
+            {!cameraActive && !selectedSelfiePreview && (
+              <div className="flex flex-col items-start justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 sm:flex-row sm:items-center">
+                <span>La cámara no está activa. Puedes reintentar o subir un archivo.</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-9 px-3 text-sm"
+                  onClick={() => void startSelfieCamera()}
+                  disabled={savingSelfie || locked}
+                >
+                  Reactivar cámara
+                </Button>
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Button
-                className="w-full"
+                className="h-11 w-full text-base"
                 variant="outline"
                 onClick={captureSelfieFromCamera}
                 disabled={savingSelfie || locked || !cameraActive}
               >
-                <Camera className="h-4 w-4 mr-2" /> Capturar rostro
+                <Camera className="h-4 w-4 mr-2" /> {selectedSelfiePreview ? 'Capturar de nuevo' : 'Capturar rostro'}
               </Button>
               <Button
-                className="w-full"
+                className="h-11 w-full text-base"
                 variant="outline"
                 onClick={() => selfieInputRef.current?.click()}
                 disabled={savingSelfie || locked}
@@ -632,7 +696,17 @@ export default function RegistrationLanding() {
               />
             </div>
           </BaseModalBody>
-          <BaseModalFooter>
+          <BaseModalFooter className="mt-1 border-t border-slate-200 pt-3">
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (savingSelfie) return;
+                setShowBio(false);
+              }}
+              disabled={savingSelfie}
+            >
+              Cancelar
+            </Button>
             <Button
               onClick={async () => {
                 if (selectedIdx !== null && token) {
@@ -653,8 +727,11 @@ export default function RegistrationLanding() {
                     const validationError = validateImageFile(fileToSend || undefined);
                     if (validationError) {
                       toast({
-                        title: 'Archivo inválido',
-                        description: validationError,
+                        title: 'Selecciona una nueva imagen',
+                        description:
+                          selectedSelfiePreview && !selfieBlob
+                            ? 'Para reemplazar tu rostro, captura una nueva foto o usa "Usar archivo".'
+                            : validationError,
                         variant: 'destructive',
                       });
                       setSavingSelfie(false);
@@ -684,53 +761,106 @@ export default function RegistrationLanding() {
                   }
                 }
                 setShowBio(false);
-                setSelectedSelfieName('');
-                setSelectedSelfiePreview('');
-                setSelfieBlob(null);
+                resetSelfieSelection();
               }}
               disabled={savingSelfie || locked}
             >
-              {savingSelfie ? 'Guardando...' : 'Guardar rostro'}
+              {savingSelfie ? (
+                <span className="inline-flex items-center">
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Guardando...
+                </span>
+              ) : (
+                'Guardar rostro'
+              )}
             </Button>
           </BaseModalFooter>
         </BaseModalContent>
       </BaseModal>
 
-      <BaseModal open={showDoc} onOpenChange={setShowDoc}>
+      <BaseModal
+        open={showDoc}
+        onOpenChange={(open) => {
+          if (savingDoc) return;
+          setShowDoc(open);
+        }}
+      >
         <BaseModalContent size="md" blur>
           <BaseModalHeader>
             <BaseModalTitle>Subir cédula</BaseModalTitle>
           </BaseModalHeader>
           <BaseModalBody className="space-y-4 text-sm text-gray-700">
             <p>Adjunta imágenes claras de la cédula. (Validación pendiente)</p>
-            <div className="border rounded-md h-56 bg-slate-100 flex items-center justify-center text-gray-500 overflow-hidden">
+            <div className="relative w-full aspect-[4/3] max-h-[280px] overflow-hidden rounded-xl border bg-slate-100 text-slate-500 sm:max-h-[340px]">
               {selectedDocPreview ? (
                 <img
                   src={selectedDocPreview}
                   alt={selectedDocName || 'Previsualización cédula'}
-                  className="max-h-52 object-contain"
+                  className="h-full w-full object-contain bg-slate-100"
                 />
               ) : (
                 <video
                   ref={docVideoRef}
-                  className="h-52 w-full object-cover"
+                  className="h-full w-full object-contain bg-black"
                   playsInline
                   muted
                 />
               )}
+              {!selectedDocPreview && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+                  <div className="h-full w-full rounded-lg border border-white/70" />
+                </div>
+              )}
             </div>
+            {!selectedDocPreview && (
+              <div className="text-sm text-slate-600">
+                Centra toda la cédula dentro del marco para evitar cortes.
+              </div>
+            )}
+            {selectedDocPreview && (
+              <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-sm text-slate-700">
+                  Vista previa cargada. Puedes reemplazarla tomando o subiendo una nueva imagen.
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-9 px-3 text-sm"
+                  onClick={resetDocSelection}
+                  disabled={savingDoc || locked}
+                >
+                  Tomar de nuevo
+                </Button>
+              </div>
+            )}
             {docCameraError && (
               <div className="text-xs text-amber-600">{docCameraError}</div>
             )}
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {!docCameraActive && !selectedDocPreview && (
+              <div className="flex flex-col items-start justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 sm:flex-row sm:items-center">
+                <span>La cámara no está activa. Puedes reintentar o subir un archivo.</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-9 px-3 text-sm"
+                  onClick={() => void startDocCamera()}
+                  disabled={savingDoc || locked}
+                >
+                  Reactivar cámara
+                </Button>
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Button
+                className="h-11 w-full text-base"
                 variant="outline"
                 onClick={captureDocFromCamera}
                 disabled={savingDoc || locked || !docCameraActive}
               >
-                <Camera className="h-4 w-4 mr-2" /> Tomar foto
+                <Camera className="h-4 w-4 mr-2" /> {selectedDocPreview ? 'Tomar de nuevo' : 'Tomar foto'}
               </Button>
               <Button
+                className="h-11 w-full text-base"
                 variant="outline"
                 onClick={() => docInputRef.current?.click()}
                 disabled={savingDoc || locked}
@@ -756,7 +886,7 @@ export default function RegistrationLanding() {
               />
             </div>
           </BaseModalBody>
-          <BaseModalFooter>
+          <BaseModalFooter className="mt-1 border-t border-slate-200 pt-3">
             <Button
               onClick={async () => {
                 if (selectedIdx !== null) {
@@ -785,8 +915,11 @@ export default function RegistrationLanding() {
                     const validationError = validateImageFile(fileToSend || undefined);
                     if (validationError) {
                       toast({
-                        title: 'Archivo inválido',
-                        description: validationError,
+                        title: 'Selecciona una nueva imagen',
+                        description:
+                          selectedDocPreview && !docBlob
+                            ? 'Para reemplazar la cédula, toma una nueva foto o usa "Subir imagen".'
+                            : validationError,
                         variant: 'destructive',
                       });
                       setSavingDoc(false);
@@ -819,9 +952,7 @@ export default function RegistrationLanding() {
                   }
                 }
                 setShowDoc(false);
-                setSelectedDocName('');
-                setSelectedDocPreview('');
-                setDocBlob(null);
+                resetDocSelection();
               }}
               disabled={savingDoc || locked}
             >

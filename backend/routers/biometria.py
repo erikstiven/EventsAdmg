@@ -79,5 +79,6 @@ async def verificar_biometria(
             candidate_embedding = extracted
 
     similarity = cosine_similarity(stored_embedding, candidate_embedding)
-    approved = similarity >= 0.75
+    threshold = FacialBiometricsService(db).match_threshold
+    approved = similarity >= threshold
     return BiometriaResponse(aprobado=approved, similitud=round(similarity, 4))

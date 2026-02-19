@@ -24,6 +24,34 @@ class EnvVariableUpdate(BaseModel):
     value: str
 
 
+def validate_backend_setting(key: str, value: str) -> str:
+    """Validate and normalize backend settings for known sensitive keys."""
+    normalized_key = (key or "").strip().upper()
+    normalized_value = (value or "").strip()
+
+    if normalized_key == "BIOMETRIC_MATCH_THRESHOLD":
+        try:
+            threshold = float(normalized_value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="BIOMETRIC_MATCH_THRESHOLD must be a number between 0 and 1.") from exc
+        if threshold < 0 or threshold > 1:
+            raise HTTPException(status_code=400, detail="BIOMETRIC_MATCH_THRESHOLD must be between 0 and 1.")
+        return str(threshold)
+
+    if normalized_key == "BIOMETRIC_ENFORCEMENT":
+        val = normalized_value.lower()
+        if val not in {"true", "false", "1", "0", "yes", "no", "on", "off"}:
+            raise HTTPException(status_code=400, detail="BIOMETRIC_ENFORCEMENT must be a boolean value.")
+        return "true" if val in {"true", "1", "yes", "on"} else "false"
+
+    if normalized_key == "BIOMETRIC_MODEL_NAME":
+        if not normalized_value:
+            raise HTTPException(status_code=400, detail="BIOMETRIC_MODEL_NAME cannot be empty.")
+        return normalized_value
+
+    return value
+
+
 def get_env_file_path(env_type: str) -> Path:
     """Get the path to the environment variable file."""
     base_path = Path(__file__).parent.parent
@@ -97,6 +125,10 @@ async def get_settings(current_user: UserResponse = Depends(get_admin_user)):
             "SMTP_USE_TLS": "Use TLS for SMTP",
             "INVITATION_EMAIL_SUBJECT": "Email subject for invitations",
             "INVITATION_EMAIL_TEMPLATE": "Email template for invitations",
+            "BIOMETRIC_MATCH_THRESHOLD": "Biometric match threshold (0..1)",
+            "BIOMETRIC_ENFORCEMENT": "Enable strict biometric enforcement (true/false)",
+            "BIOMETRIC_MODEL_NAME": "Facial recognition model name",
+            "BIOMETRIC_MODEL_VERSION": "Facial recognition model version metadata",
         }
 
         frontend_descriptions = {"VITE_API_BASE_URL": "Base API URL", "VITE_FRONTEND_URL": "Frontend URL"}
@@ -122,9 +154,11 @@ async def update_backend_setting(
     """Update a backend environment variable."""
     try:
         env_vars = read_env_file("backend")
-        env_vars[key] = update.value
+        env_vars[key] = validate_backend_setting(key, update.value)
         write_env_file("backend", env_vars)
         return {"message": f"Backend configuration '{key}' updated successfully; restart required to take effect."}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update configuration: {str(e)}")
 
@@ -150,9 +184,11 @@ async def add_backend_setting(
     """Add a backend environment variable."""
     try:
         env_vars = read_env_file("backend")
-        env_vars[key] = update.value
+        env_vars[key] = validate_backend_setting(key, update.value)
         write_env_file("backend", env_vars)
         return {"message": f"Backend configuration '{key}' added successfully; restart required to take effect."}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to add configuration: {str(e)}")
 

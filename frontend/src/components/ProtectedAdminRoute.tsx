@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContextSimple';
+import LoadingSpinner from '@/components/LoadingSpinner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Shield, User, LogIn } from 'lucide-react';
@@ -18,14 +19,7 @@ const ProtectedAdminRoute: React.FC<ProtectedAdminRouteProps> = ({
 
   // Loading state
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Verifying permissions...</p>
-        </div>
-      </div>
-    );
+    return <LoadingSpinner message="Verificando permisos..." />;
   }
 
   // If the user is not logged in, redirect to the login page
