@@ -2,11 +2,11 @@
 import json
 import logging
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func, or_
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 from core.database import get_db
 from dependencies.auth import get_current_user
@@ -21,6 +21,9 @@ from services.facial_biometrics import FacialBiometricsService
 from services.storage import StorageService
 from models.invitation_groups import Invitation_groups
 from models.invitation_group_people import Invitation_group_people
+from models.checkins import Checkins
+from models.attendees import Attendees
+from models.events import Events
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +86,25 @@ class QRCheckInResponse(BaseModel):
     checkin_id: Optional[int] = None
     attendee_name: Optional[str] = None
     event_name: Optional[str] = None
+
+
+class RecentCheckInItem(BaseModel):
+    id: int
+    checked_in_at: datetime
+    attendee_name: str
+    attendee_identification: Optional[str] = None
+    event_id: int
+    event_name: Optional[str] = None
+    participant_role: Optional[str] = None
+    validation_method: Optional[str] = None
+    gate: Optional[str] = None
+
+
+class RecentCheckInListResponse(BaseModel):
+    items: List[RecentCheckInItem]
+    total: int
+    skip: int
+    limit: int
 
 
 @router.post("/validate-qr", response_model=ValidateQRResponse)
@@ -382,6 +404,108 @@ async def qr_checkin(
     except Exception as e:
         logger.error(f"Error in QR check-in: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/recent", response_model=RecentCheckInListResponse)
+async def recent_checkins(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(30, ge=1, le=200),
+    search: Optional[str] = Query(None),
+    event_id: Optional[int] = Query(None),
+    current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("checkin.scan")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recent successful check-ins for operational visibility."""
+    conditions = []
+    if search and search.strip():
+        like = f"%{search.strip()}%"
+        conditions.append(
+            or_(
+                Attendees.full_name.ilike(like),
+                Attendees.identification.ilike(like),
+                Invitation_group_people.name.ilike(like),
+                Invitation_group_people.cedula.ilike(like),
+                Invitation_groups.titular_name.ilike(like),
+                Invitation_groups.titular_identification.ilike(like),
+                Events.name.ilike(like),
+                Checkins.validation_method.ilike(like),
+            )
+        )
+    if event_id is not None:
+        conditions.append(Checkins.event_id == event_id)
+
+    data_query = (
+        select(
+            Checkins,
+            Attendees.full_name.label("attendee_name"),
+            Attendees.identification.label("attendee_identification"),
+            Invitation_group_people.name.label("companion_name"),
+            Invitation_group_people.cedula.label("companion_cedula"),
+            Invitation_groups.titular_name.label("titular_name"),
+            Invitation_groups.titular_identification.label("titular_identification"),
+            Events.name.label("event_name"),
+        )
+        .select_from(Checkins)
+        .outerjoin(Attendees, Attendees.id == Checkins.attendee_id)
+        .outerjoin(Invitation_group_people, Invitation_group_people.id == Checkins.invitation_group_person_id)
+        .outerjoin(Invitation_groups, Invitation_groups.id == Checkins.invitation_id)
+        .outerjoin(Events, Events.id == Checkins.event_id)
+    )
+    if conditions:
+        for condition in conditions:
+            data_query = data_query.where(condition)
+    data_query = (
+        data_query
+        .order_by(Checkins.checked_in_at.desc(), Checkins.id.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+
+    count_query = (
+        select(func.count(Checkins.id))
+        .select_from(Checkins)
+        .outerjoin(Attendees, Attendees.id == Checkins.attendee_id)
+        .outerjoin(Invitation_group_people, Invitation_group_people.id == Checkins.invitation_group_person_id)
+        .outerjoin(Invitation_groups, Invitation_groups.id == Checkins.invitation_id)
+        .outerjoin(Events, Events.id == Checkins.event_id)
+    )
+    if conditions:
+        for condition in conditions:
+            count_query = count_query.where(condition)
+
+    rows = (await db.execute(data_query)).all()
+    total = int((await db.execute(count_query)).scalar() or 0)
+
+    items: List[RecentCheckInItem] = []
+    for row in rows:
+        checkin = row[0]
+        role = (checkin.participant_role or "").lower()
+        if role == "titular":
+            attendee_name = row.titular_name or "Titular"
+            attendee_identification = row.titular_identification
+        elif role == "acompanante":
+            attendee_name = row.companion_name or "Acompañante"
+            attendee_identification = row.companion_cedula
+        else:
+            attendee_name = row.attendee_name or "Invitado"
+            attendee_identification = row.attendee_identification
+
+        items.append(
+            RecentCheckInItem(
+                id=checkin.id,
+                checked_in_at=checkin.checked_in_at,
+                attendee_name=attendee_name,
+                attendee_identification=attendee_identification,
+                event_id=checkin.event_id,
+                event_name=row.event_name,
+                participant_role=checkin.participant_role,
+                validation_method=checkin.validation_method,
+                gate=checkin.gate,
+            )
+        )
+
+    return RecentCheckInListResponse(items=items, total=total, skip=skip, limit=limit)
 
 
 @router.post("/validate-biometric", response_model=BiometricValidationResponse)

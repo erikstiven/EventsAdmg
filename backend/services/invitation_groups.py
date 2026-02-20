@@ -50,6 +50,13 @@ class InvitationGroupsService:
         "<p><img src=\"{{qr_image}}\" alt=\"QR de acceso\" style=\"max-width:240px;\" /></p>"
         "<p>Gracias,<br/>EventAccess</p>"
     )
+    DEFAULT_UPDATE_EMAIL_TEMPLATE = (
+        "<p>Hola {{nombre}},</p>"
+        "<p>Se habilito una correccion en tu registro para el evento <strong>{{evento}}</strong>.</p>"
+        "<p><strong>Motivo:</strong> {{motivo}}</p>"
+        "<p>Puedes actualizar tu informacion aqui: <a href=\"{{link}}\">{{link}}</a></p>"
+        "<p>Gracias,<br/>EventAccess</p>"
+    )
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -722,7 +729,67 @@ class InvitationGroupsService:
 
         await self.db.commit()
         await self.db.refresh(obj)
+        await self._send_update_email_to_affected(obj, companions, affected, reason)
         return obj
+
+    async def _send_update_email_to_affected(
+        self,
+        obj: Invitation_groups,
+        companions: list[dict],
+        affected: list[dict],
+        reason: Optional[str],
+    ) -> None:
+        if not affected:
+            return
+
+        event_name = f"Evento {obj.event_id}"
+        try:
+            result = await self.db.execute(select(Events).where(Events.id == obj.event_id))
+            event = result.scalar_one_or_none()
+            if event and event.name:
+                event_name = event.name
+        except Exception as exc:
+            logger.warning(f"No se pudo obtener evento {obj.event_id} para correo de correccion: {exc}")
+
+        subject = "Correccion habilitada en tu invitacion"
+        template = self.DEFAULT_UPDATE_EMAIL_TEMPLATE
+        reason_text = (reason or "").strip() or "Actualiza tus documentos o datos para continuar con la revision."
+        link = obj.link or self._build_link(obj.token_plain or "")
+
+        for person in affected:
+            role = (person.get("role") or "").lower()
+            name = person.get("name") or ""
+            recipient = ""
+            if role == "titular":
+                recipient = (obj.email or "").strip()
+                if not name:
+                    name = obj.titular_name or ""
+            elif role == "acompanante":
+                idx = person.get("index")
+                if idx is None or not isinstance(idx, int) or idx < 0 or idx >= len(companions):
+                    continue
+                comp = companions[idx] if isinstance(companions[idx], dict) else {}
+                recipient = str(comp.get("email") or "").strip()
+                if not name:
+                    name = comp.get("name") or "Acompañante"
+            if not recipient:
+                continue
+
+            values = {
+                "nombre": str(name or "").strip() or "Invitado",
+                "evento": event_name,
+                "motivo": reason_text,
+                "link": link,
+            }
+            await run_in_threadpool(
+                EmailService.send_invitation_email,
+                recipient,
+                subject,
+                template,
+                values,
+                [],
+                [],
+            )
 
     async def _apply_participant_decisions(
         self,

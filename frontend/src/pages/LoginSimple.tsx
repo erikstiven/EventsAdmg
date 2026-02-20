@@ -102,7 +102,7 @@ export default function LoginSimple() {
 
           <div className="border-t pt-4 space-y-2">
             <p className="text-sm font-semibold text-gray-700">Usuarios Demo (click para autocompletar):</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -129,15 +129,6 @@ export default function LoginSimple() {
                 className="text-xs"
               >
                 👔 Staff
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fillDemoUser('asistente@demo.com')}
-                disabled={isLoading}
-                className="text-xs"
-              >
-                🎫 Asistente
               </Button>
             </div>
             <p className="text-xs text-gray-500 text-center mt-2">

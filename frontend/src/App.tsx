@@ -6,7 +6,6 @@ import { Toaster } from '@/components/ui/toaster';
 // Pages
 import LoginSimple from './pages/LoginSimple';
 import Dashboard from './pages/Dashboard';
-import RoleSelector from './pages/RoleSelector';
 
 // Admin pages
 import Events from './pages/admin/Events';
@@ -119,15 +118,6 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
-      <Route
-        path="/role-selector"
-        element={
-          <ProtectedRoute>
-            <RoleSelector />
-          </ProtectedRoute>
-        }
-      />
-      
       {/* Admin routes */}
       <Route
         path="/admin/events"

@@ -3,6 +3,7 @@
   "type": "module",
   "packageManager": "pnpm@8.10.0",
   "scripts": {
+    "preinstall": "node -e \"if(!/pnpm/.test(process.env.npm_config_user_agent||'')){console.error('Use pnpm: run `pnpm install`');process.exit(1)}\"",
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint --quiet ./src",

@@ -12,7 +12,6 @@ import {
   CheckCircle,
   ScanLine,
   UserCheck,
-  Settings,
   Mail,
   ClipboardList,
   UserCog,
@@ -226,33 +225,18 @@ export default function Dashboard() {
     <Layout>
       <div className="max-w-4xl mx-auto">
         <div className="mb-8">
-          <div className="flex justify-between items-start">
-            <div>
-              <h1 className="text-3xl font-bold mb-2">Panel principal</h1>
-              <p className="text-gray-600">
-                Bienvenido, {user?.email} ({user?.role || 'Sin rol asignado'})
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate('/role-selector')}
-            >
-              <Settings className="h-4 w-4 mr-2" />
-              Cambiar perfil
-            </Button>
-          </div>
+          <h1 className="text-3xl font-bold mb-2">Panel principal</h1>
+          <p className="text-gray-600">
+            Bienvenido, {user?.email} ({user?.role || 'Sin rol asignado'})
+          </p>
         </div>
 
         {menuItems.length === 0 && (
           <Card className="mb-6">
             <CardContent className="py-12 text-center">
               <p className="text-gray-600 mb-4">
-                No tienes un rol asignado o tu rol no tiene módulos disponibles.
+                No tienes módulos disponibles para tu perfil actual. Contacta al administrador.
               </p>
-              <Button onClick={() => navigate('/role-selector')}>
-                Seleccionar Rol
-              </Button>
             </CardContent>
           </Card>
         )}

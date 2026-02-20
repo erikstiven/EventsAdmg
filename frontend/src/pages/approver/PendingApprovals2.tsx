@@ -9,7 +9,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
-import { Eye, CheckCircle2, XCircle, CreditCard, QrCode, RotateCcw } from 'lucide-react';
+import { Eye, CheckCircle2, XCircle, CreditCard, QrCode, RotateCcw, Loader2 } from 'lucide-react';
+import { InfinitySpin } from 'react-loader-spinner';
 import { api } from '@/lib/api';
 import { config } from '@/lib/config';
 import { useToast } from '@/hooks/use-toast';
@@ -406,6 +407,7 @@ export default function PendingApprovals2() {
   const openConfirm = (item: ApprovalItem, action: 'approve') => {
     setConfirmItem(item);
     setConfirmAction(action);
+    setDialogOpen(false);
     setConfirmOpen(true);
   };
 
@@ -892,7 +894,13 @@ export default function PendingApprovals2() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (isApproving) return;
+          setConfirmOpen(open);
+        }}
+      >
         <DialogContent
           className="w-[90vw] max-w-md"
           onPointerDownOutside={(e) => e.preventDefault()}
@@ -913,7 +921,10 @@ export default function PendingApprovals2() {
             )}
           </div>
           {isApproving && (
-            <div className="text-sm text-gray-500">Aprobando, espera un momento...</div>
+            <div className="py-2 flex flex-col items-center gap-2 text-sm text-gray-500">
+              <InfinitySpin width="120" color="#1d4ed8" />
+              <p>Aprobando, espera un momento...</p>
+            </div>
           )}
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={isApproving}>
@@ -995,7 +1006,14 @@ export default function PendingApprovals2() {
               Cancelar
             </Button>
             <Button onClick={requestUpdate} disabled={isUpdating}>
-              {isUpdating ? 'Procesando...' : 'Habilitar corrección'}
+              {isUpdating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Procesando...
+                </>
+              ) : (
+                'Habilitar corrección'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

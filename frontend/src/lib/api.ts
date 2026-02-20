@@ -71,6 +71,18 @@ export interface CheckIn {
   created_at: string;
 }
 
+export interface RecentCheckIn {
+  id: number;
+  checked_in_at: string;
+  attendee_name: string;
+  attendee_identification?: string | null;
+  event_id: number;
+  event_name?: string | null;
+  participant_role?: string | null;
+  validation_method?: string | null;
+  gate?: string | null;
+}
+
 export interface BiometricValidation {
   id: number;
   invitation_id: number;
@@ -533,6 +545,17 @@ export const api = {
         body: JSON.stringify({ invitation_id, fingerprint_code }),
       });
       if (!res.ok) throw new Error(await api.checkIns.parseError(res, 'Error al validar manualmente'));
+      return await res.json();
+    },
+    recent: async (params?: { skip?: number; limit?: number; search?: string; event_id?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.skip !== undefined) qs.set('skip', String(params.skip));
+      if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+      if (params?.search) qs.set('search', params.search);
+      if (params?.event_id !== undefined) qs.set('event_id', String(params.event_id));
+      const endpoint = qs.toString() ? `/api/v1/checkin/recent?${qs.toString()}` : '/api/v1/checkin/recent';
+      const res = await authSimple.fetch(endpoint);
+      if (!res.ok) throw new Error(await api.checkIns.parseError(res, 'Error al cargar ingresos recientes'));
       return await res.json();
     },
   },

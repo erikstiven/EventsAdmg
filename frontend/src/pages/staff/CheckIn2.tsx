@@ -1,7 +1,11 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Layout } from '@/components/Layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { QRScanner } from '@/components/QRScanner';
 import { FaceModal } from '@/components/FaceModal';
 import {
@@ -56,6 +60,17 @@ type LastScan = {
   at: string;
 };
 
+type RecentCheckIn = {
+  id: number;
+  checked_in_at: string;
+  attendee_name: string;
+  attendee_identification?: string | null;
+  event_id: number;
+  event_name?: string | null;
+  participant_role?: string | null;
+  gate?: string | null;
+};
+
 export default function CheckIn2() {
   const { toast } = useToast();
   const facialFlowEnabled = true;
@@ -72,6 +87,14 @@ export default function CheckIn2() {
   const [manualLoading, setManualLoading] = useState(false);
   const [qrCheckInLoading, setQrCheckInLoading] = useState(false);
   const [lastScan, setLastScan] = useState<LastScan | null>(null);
+  const [recentCheckins, setRecentCheckins] = useState<RecentCheckIn[]>([]);
+  const [recentSearch, setRecentSearch] = useState('');
+  const [recentTotal, setRecentTotal] = useState(0);
+  const [recentLoading, setRecentLoading] = useState(false);
+  const [recentPage, setRecentPage] = useState(1);
+  const recentPageSize = 10;
+  const [events, setEvents] = useState<{ id: number; name: string }[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<string>('all');
   const [faceScanOpen, setFaceScanOpen] = useState(false);
   const [scanFeedback, setScanFeedback] = useState<ScanFeedback>({
     type: 'neutral',
@@ -116,6 +139,79 @@ export default function CheckIn2() {
       hour12: false,
     });
 
+  const fetchRecentCheckins = useCallback(async (params?: { query?: string; page?: number; eventId?: string }) => {
+    const query = params?.query ?? recentSearch;
+    const page = params?.page ?? recentPage;
+    const eventId = params?.eventId ?? selectedEventId;
+    try {
+      setRecentLoading(true);
+      const res = await api.checkIns.recent({
+        skip: Math.max(0, (page - 1) * recentPageSize),
+        limit: recentPageSize,
+        search: (query ?? '').trim() || undefined,
+        event_id: eventId !== 'all' ? Number(eventId) : undefined,
+      });
+      setRecentCheckins(Array.isArray(res?.items) ? res.items : []);
+      setRecentTotal(Number(res?.total || 0));
+    } catch {
+      // Silent fail for operational panel refresh.
+    } finally {
+      setRecentLoading(false);
+    }
+  }, [recentPage, recentSearch, recentPageSize, selectedEventId]);
+
+  const totalRecentPages = useMemo(
+    () => Math.max(1, Math.ceil(recentTotal / recentPageSize)),
+    [recentTotal, recentPageSize]
+  );
+
+  useEffect(() => {
+    const timerId = window.setTimeout(() => {
+      setRecentPage(1);
+      fetchRecentCheckins({ query: recentSearch, page: 1 });
+    }, 250);
+    return () => window.clearTimeout(timerId);
+  }, [fetchRecentCheckins, recentSearch]);
+
+  useEffect(() => {
+    setRecentPage(1);
+    fetchRecentCheckins({ page: 1, eventId: selectedEventId });
+  }, [fetchRecentCheckins, selectedEventId]);
+
+  useEffect(() => {
+    fetchRecentCheckins({ page: 1 });
+    const intervalId = window.setInterval(() => {
+      if (document.hidden) return;
+      fetchRecentCheckins();
+    }, 10000);
+    return () => window.clearInterval(intervalId);
+  }, [fetchRecentCheckins]);
+
+  useEffect(() => {
+    const loadEvents = async () => {
+      try {
+        const response = await api.events.list({ limit: 2000 });
+        setEvents(response.items || []);
+      } catch {
+        // No-op: event filter is optional.
+      }
+    };
+    loadEvents();
+  }, []);
+
+  useEffect(() => {
+    fetchRecentCheckins({ page: recentPage });
+  }, [fetchRecentCheckins, recentPage]);
+
+  const isExactMatch = (row: RecentCheckIn) => {
+    const q = recentSearch.trim().toLowerCase();
+    if (!q) return false;
+    const name = (row.attendee_name || '').trim().toLowerCase();
+    const id = String(row.attendee_identification || '').replace(/\s+/g, '').toLowerCase();
+    const normalizedQ = q.replace(/\s+/g, '');
+    return name === q || id === normalizedQ;
+  };
+
   const markApprovalCompleted = (method: ApprovalMethod, detail?: string) => {
     const attendee = qrData?.attendee_name || 'Invitado';
     const eventName = qrData?.event_name || 'Sin evento';
@@ -131,6 +227,7 @@ export default function CheckIn2() {
       at: nowLabel(),
     });
     setQrScanned(false);
+    fetchRecentCheckins({ page: 1 });
   };
 
   const closeApprovalDialog = () => {
@@ -483,14 +580,107 @@ export default function CheckIn2() {
                   <span className="font-medium">Evento:</span> {lastScan.event}
                 </div>
               )}
-              {lastScan.method && (
-                <div className="text-slate-600">
-                  <span className="font-medium">Método:</span> {lastScan.method}
-                </div>
-              )}
             </CardContent>
           </Card>
         )}
+
+        <Card>
+          <CardHeader className="space-y-3">
+            <CardTitle>Ingresos recientes</CardTitle>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Input
+                placeholder="Buscar por nombre, cédula o evento"
+                value={recentSearch}
+                onChange={(e) => setRecentSearch(e.target.value)}
+              />
+              <Select value={selectedEventId} onValueChange={setSelectedEventId}>
+                <SelectTrigger className="sm:w-[260px]">
+                  <SelectValue placeholder="Filtrar por evento" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos los eventos</SelectItem>
+                  {events.map((ev) => (
+                    <SelectItem key={ev.id} value={String(ev.id)}>
+                      {ev.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Hora</TableHead>
+                  <TableHead>Invitado</TableHead>
+                  <TableHead>Cédula</TableHead>
+                  <TableHead>Evento</TableHead>
+                  <TableHead>Puerta</TableHead>
+                  <TableHead>Estado</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {recentCheckins.map((row) => (
+                  <TableRow key={row.id} className={isExactMatch(row) ? 'bg-amber-50/60' : undefined}>
+                    <TableCell>
+                      {row.checked_in_at ? new Date(row.checked_in_at).toLocaleString('es-EC', { hour12: false }) : '-'}
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      {row.attendee_name || '-'}
+                      {isExactMatch(row) && (
+                        <Badge variant="outline" className="ml-2 border-amber-300 text-amber-700">
+                          Coincidencia exacta
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className={isExactMatch(row) ? 'font-semibold text-amber-700' : undefined}>
+                      {row.attendee_identification || '-'}
+                    </TableCell>
+                    <TableCell>{row.event_name || `Evento ${row.event_id}`}</TableCell>
+                    <TableCell>{row.gate || '-'}</TableCell>
+                    <TableCell>
+                      <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">Ingresó</Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {recentCheckins.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-sm text-gray-500 py-8">
+                      {recentLoading ? 'Cargando ingresos recientes...' : 'No hay ingresos recientes para mostrar.'}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+            <div className="mt-4 flex flex-col gap-2 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                Mostrando {recentCheckins.length} de {recentTotal} ingresos
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={recentPage <= 1 || recentLoading}
+                  onClick={() => setRecentPage((p) => Math.max(1, p - 1))}
+                >
+                  Anterior
+                </Button>
+                <span>
+                  Página {recentPage} de {totalRecentPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={recentPage >= totalRecentPages || recentLoading}
+                  onClick={() => setRecentPage((p) => Math.min(totalRecentPages, p + 1))}
+                >
+                  Siguiente
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
       </div>
 
@@ -681,7 +871,6 @@ export default function CheckIn2() {
           </DialogHeader>
           <div className="space-y-2 text-sm text-gray-700">
             <p>La aprobación fue registrada correctamente.</p>
-            <p className="text-gray-500">Método: {approvalMethod}</p>
             <p>
               <span className="text-gray-500">Invitado:</span> {lastScan?.attendee || qrData?.attendee_name || 'N/D'}
             </p>

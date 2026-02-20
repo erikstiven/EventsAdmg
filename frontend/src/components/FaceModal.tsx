@@ -7,6 +7,7 @@ import {
   BaseModalHeader,
   BaseModalTitle,
 } from '@/components/ui/base-modal';
+import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -344,7 +345,14 @@ export const FaceModal: React.FC<FaceModalProps> = ({
             Cancelar
           </Button>
           <Button onClick={handleValidate} disabled={!embedding || isComparing}>
-            {isComparing ? 'Validando…' : 'Validar biometría'}
+            {isComparing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Validando...
+              </>
+            ) : (
+              'Validar biometría'
+            )}
           </Button>
         </BaseModalFooter>
       </BaseModalContent>

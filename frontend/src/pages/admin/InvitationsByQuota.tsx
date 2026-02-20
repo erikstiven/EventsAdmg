@@ -123,6 +123,17 @@ export default function InvitationsByQuota() {
   const [reopenLoading, setReopenLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+
+  const dedupeInvitations = useCallback((items: QuotaInvitation[]) => {
+    const seen = new Set<string>();
+    return items.filter((inv) => {
+      const key = String(inv.rawId ?? inv.id);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, []);
+
   const handleCopy = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -212,7 +223,7 @@ export default function InvitationsByQuota() {
           titularDocUrl: item.titular_doc_url,
         };
       });
-      setInvitations(mapped);
+      setInvitations(dedupeInvitations(mapped));
       setLastUpdatedAt(new Date());
       return mapped;
     } catch {
@@ -225,7 +236,7 @@ export default function InvitationsByQuota() {
       }
       return [];
     }
-  }, [events, toast]);
+  }, [dedupeInvitations, events, toast]);
 
   useEffect(() => {
     fetchInvitations();
@@ -350,27 +361,29 @@ export default function InvitationsByQuota() {
 
       const eventName = events.find((ev) => String(ev.id) === form.eventId)?.name || 'Evento';
       setCreatedLink(response.link || '');
-      setInvitations((prev) => [
-        {
-          id: `INV-${String(prev.length + 1).padStart(3, '0')}`,
-          rawId: response.id,
-          eventId: Number(form.eventId),
-          titular: response.titular_name,
-          event: eventName,
-          cupoUsado: 0,
-          cupoTotal: response.group_size,
-          estado: response.status,
-          link: response.link || generatedLink,
-          sent: Boolean(response.email_sent_at),
-          emailSentAt: response.email_sent_at,
-          companions: companionsPayload,
-          titularCedula: form.cedula,
-          titularEmail: form.email,
-          titularTelefono: form.telefono,
-          titularCodigo: form.codigoDactilar,
-        },
-        ...prev,
-      ]);
+      setInvitations((prev) =>
+        dedupeInvitations([
+          {
+            id: `INV-${String(prev.length + 1).padStart(3, '0')}`,
+            rawId: response.id,
+            eventId: Number(form.eventId),
+            titular: response.titular_name,
+            event: eventName,
+            cupoUsado: 0,
+            cupoTotal: response.group_size,
+            estado: response.status,
+            link: response.link || generatedLink,
+            sent: Boolean(response.email_sent_at),
+            emailSentAt: response.email_sent_at,
+            companions: companionsPayload,
+            titularCedula: form.cedula,
+            titularEmail: form.email,
+            titularTelefono: form.telefono,
+            titularCodigo: form.codigoDactilar,
+          },
+          ...prev,
+        ])
+      );
       setShowSuccess(true);
       setShowForm(false);
       resetInvitationForm();

@@ -68,52 +68,5 @@ async def assign_role_to_user(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Manually assign a role to current user (for testing)"""
-    try:
-        valid_roles = ["ADMIN", "APROBADOR", "STAFF", "ASISTENTE"]
-        if role not in valid_roles:
-            raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
-        
-        service = User_rolesService(db)
-        existing_role = await service.get_by_field("user_id", current_user.id)
-        
-        if existing_role:
-            # Update existing role in user_roles table
-            updated = await service.update(
-                existing_role.id,
-                {"role": role, "created_at": datetime.now(timezone.utc)},
-                current_user.id
-            )
-            
-            # ALSO update the role in the main User model for the auth system
-            from models.auth import User
-            from sqlalchemy import update
-            await db.execute(
-                update(User).where(User.id == current_user.id).values(role=role)
-            )
-            await db.commit()
-            
-            return {"message": f"Role updated to {role}", "user_id": current_user.id, "role": updated.role}
-        else:
-            # Create new role in user_roles table
-            user_role_data = {
-                "user_id": current_user.id,
-                "role": role,
-                "created_at": datetime.now(timezone.utc),
-            }
-            created = await service.create(user_role_data, current_user.id)
-            
-            # ALSO update the role in the main User model for the auth system
-            from models.auth import User
-            from sqlalchemy import update
-            await db.execute(
-                update(User).where(User.id == current_user.id).values(role=role)
-            )
-            await db.commit()
-            
-            return {"message": f"Role assigned: {role}", "user_id": current_user.id, "role": created.role}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error assigning role: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Disabled endpoint: self role-switching is not allowed in current environment."""
+    raise HTTPException(status_code=403, detail="Cambio de perfil deshabilitado.")
