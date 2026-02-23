@@ -9,6 +9,9 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from dependencies.auth import get_current_user
+from dependencies.permissions import require_any_permission
+from schemas.auth import UserResponse
 from services.events import EventsService
 
 # Set up logging
@@ -105,6 +108,8 @@ async def query_eventss(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
+    _user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("events.read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Query eventss with filtering, sorting, and pagination"""
@@ -150,6 +155,8 @@ async def query_eventss_all(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
+    _user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("events.read")),
     db: AsyncSession = Depends(get_db),
 ):
     # Query eventss with filtering, sorting, and pagination without user limitation
@@ -188,6 +195,8 @@ async def query_eventss_all(
 async def get_events(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
+    _user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("events.read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single events by ID"""
@@ -211,6 +220,8 @@ async def get_events(
 @router.post("", response_model=EventsResponse, status_code=201)
 async def create_events(
     data: EventsData,
+    _user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("events.create")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new events"""
@@ -235,6 +246,8 @@ async def create_events(
 @router.post("/batch", response_model=List[EventsResponse], status_code=201)
 async def create_eventss_batch(
     request: EventsBatchCreateRequest,
+    _user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("events.create")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create multiple eventss in a single request"""
@@ -260,6 +273,8 @@ async def create_eventss_batch(
 @router.put("/batch", response_model=List[EventsResponse])
 async def update_eventss_batch(
     request: EventsBatchUpdateRequest,
+    _user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("events.update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update multiple eventss in a single request"""
@@ -288,6 +303,8 @@ async def update_eventss_batch(
 async def update_events(
     id: int,
     data: EventsUpdateData,
+    _user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("events.update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update an existing events"""
@@ -317,6 +334,8 @@ async def update_events(
 @router.delete("/batch")
 async def delete_eventss_batch(
     request: EventsBatchDeleteRequest,
+    _user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("events.delete")),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete multiple eventss by their IDs"""
@@ -342,6 +361,8 @@ async def delete_eventss_batch(
 @router.delete("/{id}")
 async def delete_events(
     id: int,
+    _user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("events.delete")),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a single events by ID"""

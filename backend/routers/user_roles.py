@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from dependencies.permissions import require_any_permission
 from services.user_roles import User_rolesService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
@@ -81,6 +82,7 @@ async def query_user_roless(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("user_roles.read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Query user_roless with filtering, sorting, and pagination (user can only see their own records)"""
@@ -119,6 +121,8 @@ async def query_user_roless_all(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
+    _user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("user_roles.read")),
     db: AsyncSession = Depends(get_db),
 ):
     # Query user_roless with filtering, sorting, and pagination without user limitation
@@ -154,6 +158,7 @@ async def get_user_roles(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("user_roles.read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single user_roles by ID (user can only see their own records)"""
@@ -178,6 +183,7 @@ async def get_user_roles(
 async def create_user_roles(
     data: User_rolesData,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("user_roles.create")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new user_roles"""
@@ -203,6 +209,7 @@ async def create_user_roles(
 async def create_user_roless_batch(
     request: User_rolesBatchCreateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("user_roles.create")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create multiple user_roless in a single request"""
@@ -229,6 +236,7 @@ async def create_user_roless_batch(
 async def update_user_roless_batch(
     request: User_rolesBatchUpdateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("user_roles.update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update multiple user_roless in a single request (requires ownership)"""
@@ -258,6 +266,7 @@ async def update_user_roles(
     id: int,
     data: User_rolesUpdateData,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("user_roles.update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update an existing user_roles (requires ownership)"""
@@ -288,6 +297,7 @@ async def update_user_roles(
 async def delete_user_roless_batch(
     request: User_rolesBatchDeleteRequest,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("user_roles.delete")),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete multiple user_roless by their IDs (requires ownership)"""
@@ -314,6 +324,7 @@ async def delete_user_roless_batch(
 async def delete_user_roles(
     id: int,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("user_roles.delete")),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a single user_roles by ID (requires ownership)"""

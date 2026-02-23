@@ -27,17 +27,17 @@ async def get_current_user_role(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get current user's role, auto-assign ADMIN if no role exists"""
+    """Get current user's role, auto-assign ASISTENTE if no role exists"""
     try:
         service = User_rolesService(db)
         user_role = await service.get_by_field("user_id", current_user.id)
         
         if not user_role:
-            # Auto-assign ADMIN role for first-time users
-            logger.info(f"Auto-assigning ADMIN role to user {current_user.id}")
+            # Auto-assign least-privilege role for first-time users
+            logger.info(f"Auto-assigning ASISTENTE role to user {current_user.id}")
             user_role_data = {
                 "user_id": current_user.id,
-                "role": "ADMIN",
+                "role": "ASISTENTE",
                 "created_at": datetime.now(timezone.utc),
             }
             user_role = await service.create(user_role_data, current_user.id)
@@ -46,7 +46,7 @@ async def get_current_user_role(
             from models.auth import User
             from sqlalchemy import update
             await db.execute(
-                update(User).where(User.id == current_user.id).values(role="ADMIN")
+                update(User).where(User.id == current_user.id).values(role="ASISTENTE")
             )
             await db.commit()
         

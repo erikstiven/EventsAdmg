@@ -53,6 +53,10 @@ DEFAULT_PERMISSIONS: tuple[PermissionDef, ...] = (
     PermissionDef("staff.create", "Crear personal operativo", "STAFF"),
     PermissionDef("staff.update", "Editar personal operativo", "STAFF"),
     PermissionDef("staff.delete", "Eliminar personal operativo", "STAFF"),
+    PermissionDef("user_roles.read", "Ver asignaciones de roles", "STAFF"),
+    PermissionDef("user_roles.create", "Crear asignaciones de roles", "STAFF"),
+    PermissionDef("user_roles.update", "Editar asignaciones de roles", "STAFF"),
+    PermissionDef("user_roles.delete", "Eliminar asignaciones de roles", "STAFF"),
 )
 
 

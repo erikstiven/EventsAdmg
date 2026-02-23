@@ -11,6 +11,7 @@ from typing import Optional, List
 
 from core.database import get_db
 from dependencies.auth import get_current_user
+from dependencies.permissions import require_any_permission
 from schemas.auth import UserResponse
 from services.invitations import InvitationsService
 from services.attendees import AttendeesService
@@ -81,6 +82,7 @@ class InvitationDetailResponse(BaseModel):
 async def generate_invitation(
     data: GenerateInvitationRequest,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("invitations.create")),
     db: AsyncSession = Depends(get_db),
 ):
     """Generate a new invitation with QR token and optional biometric photo (ADMIN only)"""
@@ -266,6 +268,7 @@ async def activate_invitation(
 @router.get("/pending-approvals", response_model=List[InvitationDetailResponse])
 async def get_pending_approvals(
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("approvals.read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get all invitations pending approval (APROBADOR only)"""
@@ -310,6 +313,7 @@ async def get_pending_approvals(
 async def approve_or_reject_invitation(
     data: ApprovalRequest,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("approvals.decide")),
     db: AsyncSession = Depends(get_db),
 ):
     """Approve or reject an invitation (APROBADOR only)"""

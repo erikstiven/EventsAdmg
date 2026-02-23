@@ -12,6 +12,7 @@ from core.database import get_db
 from services.attendees import AttendeesService
 from services.storage import StorageService
 from dependencies.auth import get_current_user
+from dependencies.permissions import require_any_permission
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -114,6 +115,7 @@ async def query_attendeess(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("attendees.read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Query attendeess with filtering, sorting, and pagination (user can only see their own records)"""
@@ -152,6 +154,8 @@ async def query_attendeess_all(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
+    _user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("attendees.read")),
     db: AsyncSession = Depends(get_db),
 ):
     # Query attendeess with filtering, sorting, and pagination without user limitation
@@ -186,6 +190,7 @@ async def query_attendeess_all(
 async def lookup_attendee_by_cedula(
     cedula: str = Query(..., description="Cédula a buscar"),
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("attendees.read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Lookup attendee by identification (cedula)"""
@@ -205,6 +210,7 @@ async def get_attendees(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("attendees.read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single attendees by ID (user can only see their own records)"""
@@ -229,6 +235,7 @@ async def get_attendees(
 async def create_attendees(
     data: AttendeesData,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("attendees.create")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new attendees"""
@@ -276,6 +283,7 @@ async def create_attendees(
 async def create_attendeess_batch(
     request: AttendeesBatchCreateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("attendees.create")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create multiple attendeess in a single request"""
@@ -302,6 +310,7 @@ async def create_attendeess_batch(
 async def update_attendeess_batch(
     request: AttendeesBatchUpdateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("attendees.update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update multiple attendeess in a single request (requires ownership)"""
@@ -331,6 +340,7 @@ async def update_attendees(
     id: int,
     data: AttendeesUpdateData,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("attendees.update")),
     db: AsyncSession = Depends(get_db),
 ):
     """Update an existing attendees (requires ownership)"""
@@ -380,6 +390,7 @@ async def update_attendees(
 async def delete_attendeess_batch(
     request: AttendeesBatchDeleteRequest,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("attendees.delete")),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete multiple attendeess by their IDs (requires ownership)"""
@@ -406,6 +417,7 @@ async def delete_attendeess_batch(
 async def delete_attendees(
     id: int,
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("attendees.delete")),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a single attendees by ID (requires ownership)"""
@@ -431,6 +443,7 @@ async def delete_attendees(
 async def lookup_attendee_by_cedula(
     cedula: str = Query(..., description="Cédula a buscar"),
     current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("attendees.read")),
     db: AsyncSession = Depends(get_db),
 ):
     """Lookup attendee by identification (cedula)"""
