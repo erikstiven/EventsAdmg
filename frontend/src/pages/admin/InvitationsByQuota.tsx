@@ -28,7 +28,11 @@ import {
   DialogTitle as ModalTitle,
   DialogDescription as ModalDescription,
 } from '@/components/ui/dialog';
+import ActionIconButton from '@/components/ActionIconButton';
+import InvitationGroupStatusBadge from '@/components/InvitationGroupStatusBadge';
 import { api } from '@/lib/api';
+import { getInvitationGroupStatusMeta } from '@/lib/invitationGroupStatus';
+import { useAuth } from '@/contexts/AuthContextSimple';
 import { useToast } from '@/hooks/use-toast';
 
 type QuotaInvitation = {
@@ -61,6 +65,7 @@ type QuotaInvitation = {
 
 export default function InvitationsByQuota() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const theme = useTheme();
   const isSmall = useMediaQuery(theme.breakpoints.down('sm'));
   const [events, setEvents] = useState<{ id: number; name: string }[]>([]);
@@ -151,6 +156,11 @@ export default function InvitationsByQuota() {
   };
 
   useEffect(() => {
+    const canReadEvents = Boolean(user?.is_superuser) || (user?.permissions || []).some((p) => p.toLowerCase() === 'events.read');
+    if (!canReadEvents) {
+      setEvents([]);
+      return;
+    }
     const loadEvents = async () => {
       try {
         const response = await api.events.list({ limit: 2000 });
@@ -164,37 +174,11 @@ export default function InvitationsByQuota() {
       }
     };
     loadEvents();
-  }, [toast]);
+  }, [toast, user?.is_superuser, user?.permissions]);
 
   const fetchInvitations = useCallback(async (options?: { silent?: boolean }) => {
     try {
       const response = await api.invitationGroups.list({ limit: 2000 });
-      const normalizeStatus = (rawStatus?: string) => {
-        if (!rawStatus) return 'Pendiente completar' as QuotaInvitation['estado'];
-        const value = rawStatus.toLowerCase().trim();
-        if (['pendiente completar', 'pendiente_completar', 'generado'].includes(value)) {
-          return 'Pendiente completar';
-        }
-        if (['en registro', 'en_registro', 'en proceso', 'en_proceso'].includes(value)) {
-          return 'En registro';
-        }
-        if (['pendiente aprobación', 'pendiente_aprobacion', 'pendiente aprobacion', 'pendiente_aprobación'].includes(value)) {
-          return 'Pendiente aprobación';
-        }
-        if (value.includes('pendiente') && value.includes('actualiz')) {
-          return 'Pendiente de actualización';
-        }
-        if (['aprobado parcial', 'aprobado_parcial'].includes(value)) {
-          return 'Aprobado parcial';
-        }
-        if (['completado', 'aprobado'].includes(value)) {
-          return 'Aprobado';
-        }
-        if (['rechazado', 'rechazada'].includes(value)) {
-          return 'Rechazado';
-        }
-        return 'Pendiente completar';
-      };
       const mapped = (response.items || []).map((item: any) => {
         const companions = Array.isArray(item.companions) ? item.companions : [];
         const titularComplete = Boolean(item.titular_selfie_url && item.titular_doc_url);
@@ -210,7 +194,7 @@ export default function InvitationsByQuota() {
           event: events.find((ev) => ev.id === item.event_id)?.name || `Evento ${item.event_id}`,
           cupoUsado,
           cupoTotal: item.group_size,
-          estado: normalizeStatus(item.status),
+          estado: getInvitationGroupStatusMeta(item.status).label as QuotaInvitation['estado'],
           link: item.link,
           sent: Boolean(item.email_sent_at),
           emailSentAt: item.email_sent_at,
@@ -660,53 +644,19 @@ export default function InvitationsByQuota() {
     return `${link.slice(0, 24)}…${link.slice(-6)}`;
   };
 
-  const statusStyles = (estado: QuotaInvitation['estado']) => {
-    switch (estado) {
-      case 'Pendiente completar':
-        return 'bg-amber-100 text-amber-800';
-      case 'En registro':
-        return 'bg-blue-100 text-blue-800';
-      case 'Pendiente aprobación':
-        return 'bg-violet-100 text-violet-800';
-      case 'Pendiente de actualización':
-        return 'bg-indigo-100 text-indigo-800';
-      case 'Aprobado parcial':
-        return 'bg-amber-50 text-amber-700';
-      case 'Aprobado':
-        return 'bg-emerald-100 text-emerald-800';
-      case 'Rechazado':
-        return 'bg-rose-100 text-rose-800';
-      default:
-        return 'bg-slate-100 text-slate-700';
-    }
-  };
-
-  const statusLabel = (estado: QuotaInvitation['estado']) => {
-    switch (estado) {
-      case 'Pendiente completar':
-        return 'Pendiente completar';
-      case 'En registro':
-        return 'En registro';
-      case 'Pendiente aprobación':
-        return 'Pendiente aprobación';
-      case 'Pendiente de actualización':
-        return 'Pendiente de actualización';
-      case 'Aprobado parcial':
-        return 'Aprobado parcial';
-      case 'Aprobado':
-        return 'Aprobado';
-      case 'Rechazado':
-        return 'Rechazado';
-      default:
-        return estado;
-    }
-  };
-
   const formatSentAt = (value?: string | null) => {
     if (!value) return '';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString();
+    return new Intl.DateTimeFormat('es-EC', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(date);
   };
 
   const isPersonComplete = (selfieUrl?: string | null, docUrl?: string | null) =>
@@ -922,9 +872,7 @@ export default function InvitationsByQuota() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-1">
-                        <Badge className={`${statusStyles(inv.estado)} px-3 py-1 text-xs`} title={inv.estado}>
-                          {statusLabel(inv.estado)}
-                        </Badge>
+                        <InvitationGroupStatusBadge status={inv.estado} className="px-3 py-1 text-xs" />
                       </div>
                     </TableCell>
                     <TableCell className="max-w-[220px] truncate" title={inv.link}>
@@ -933,21 +881,13 @@ export default function InvitationsByQuota() {
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
                         {canEditInvitation(inv.estado) && (
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            title="Editar invitación"
-                            aria-label="Editar invitación"
-                            onClick={() => openEditInForm(inv)}
-                          >
+                          <ActionIconButton label="Editar invitación" tone="info" onClick={() => openEditInForm(inv)}>
                             <Pencil className="h-4 w-4" />
-                          </Button>
+                          </ActionIconButton>
                         )}
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Ver detalle"
-                          aria-label="Ver detalle"
+                        <ActionIconButton
+                          label="Ver detalle"
+                          tone="neutral"
                           onClick={async () => {
                             const updated = await fetchInvitations();
                             const latest =
@@ -959,23 +899,15 @@ export default function InvitationsByQuota() {
                           }}
                         >
                           <Eye className="h-4 w-4" />
-                        </Button>
+                        </ActionIconButton>
                         {canRequestUpdate(inv.estado) && (
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            title="Habilitar actualización"
-                            aria-label="Habilitar actualización"
-                            onClick={() => openRequestUpdate(inv)}
-                          >
+                          <ActionIconButton label="Habilitar actualización" tone="warning" onClick={() => openRequestUpdate(inv)}>
                             <RotateCcw className="h-4 w-4" />
-                          </Button>
+                          </ActionIconButton>
                         )}
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title={inv.sent ? 'Reenviar' : 'Enviar'}
-                          aria-label={inv.sent ? 'Reenviar' : 'Enviar'}
+                        <ActionIconButton
+                          label={inv.sent ? 'Reenviar correo' : 'Enviar correo'}
+                          tone="success"
                           onClick={async () => {
                             if (!inv.rawId) return;
                             try {
@@ -1001,16 +933,10 @@ export default function InvitationsByQuota() {
                           }}
                         >
                           <Mail className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Copiar link"
-                          aria-label="Copiar link"
-                          onClick={() => handleCopy(inv.link)}
-                        >
+                        </ActionIconButton>
+                        <ActionIconButton label="Copiar link" tone="neutral" onClick={() => handleCopy(inv.link)}>
                           <Copy className="h-4 w-4" />
-                        </Button>
+                        </ActionIconButton>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -1451,7 +1377,7 @@ export default function InvitationsByQuota() {
                 docUrl: c.doc_url,
               })),
             ];
-            const statusText = statusLabel(detailInvitation.estado);
+            const statusText = getInvitationGroupStatusMeta(detailInvitation.estado).label;
             const sentText = detailInvitation.sent ? 'Enviado' : 'Pendiente';
 
             return (
@@ -1484,7 +1410,7 @@ export default function InvitationsByQuota() {
                       <div className="space-y-1">
                         <p className="text-xs font-medium text-slate-500">Estado</p>
                         <div className="flex h-[42px] items-center rounded-md border bg-slate-50 px-3">
-                          <Badge variant={detailInvitation.estado === 'Aprobado' ? 'default' : 'outline'}>{statusText}</Badge>
+                          <InvitationGroupStatusBadge status={statusText} />
                         </div>
                       </div>
                       <div className="space-y-1">
@@ -1595,12 +1521,14 @@ export default function InvitationsByQuota() {
       </AlertDialog>
 
       <AlertDialog open={creating} onOpenChange={() => {}}>
-        <AlertDialogContent>
+        <AlertDialogContent className="sm:max-w-md">
           <AlertDialogHeader>
-            <AlertDialogTitle>Creando invitación...</AlertDialogTitle>
+            <AlertDialogTitle className="text-center">Creando invitación...</AlertDialogTitle>
           </AlertDialogHeader>
-          <div className="py-2 flex flex-col items-center gap-3 text-sm text-gray-600">
-            <InfinitySpin width="160" color="#1d4ed8" />
+          <div className="py-2 flex flex-col items-center gap-3 text-sm text-gray-600 text-center">
+            <div className="w-full flex justify-center">
+              <InfinitySpin width="160" color="#1d4ed8" />
+            </div>
             <p>Estamos generando el link y enviando el correo si aplica. Por favor espera.</p>
           </div>
         </AlertDialogContent>

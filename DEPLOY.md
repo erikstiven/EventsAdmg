@@ -1,90 +1,96 @@
-# Guía de Despliegue en Producción - Debian 12 (Detrás de Apache Proxy)
+# Guia de despliegue - EventsAdmg (Debian 12 + Docker)
 
-Esta guía detalla los pasos para desplegar el proyecto en el servidor de red local **10.100.46.37**, el cual recibirá tráfico desde un proxy Apache externo (`https://eventos.ge-admg.com`).
+Esta guia corresponde al repositorio actual:
 
-## 1. Preparación del Servidor (10.100.46.37)
+- Repo: `https://github.com/erikstiven/EventsAdmg.git`
+- Rama: `main`
 
-Actualiza los paquetes e instala Docker en el servidor local:
+## 1. Preparar servidor
+
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y docker.io docker-compose-v2
+sudo apt install -y docker.io docker-compose-v2 git
 ```
 
-## 2. Clonar y Preparar
-
-Sitúate en la rama de despliegue:
-```bash
-git clone http://10.100.46.36/root/eventos-reconocimiento-facial.git
-cd eventos-reconocimiento-facial
-git checkout deploy
-```
-
-## 3. Configuración del Entorno (.env)
-
-Crea el archivo `.env` en la raíz. **Es vital configurar la URL base correcta** para que el backend genere enlaces válidos:
-
-```env
-# URL Pública del proyecto (Importante para QR y links)
-PYTHON_BACKEND_URL=https://eventos.ge-admg.com
-
-# Database y Entorno
-DATABASE_URL=sqlite+aiosqlite:////app/data/eventaccess.db
-DEBUG=false
-ENVIRONMENT=production
-PORT=8000
-
-# Seguridad
-SECRET_KEY=clave_segura_de_al_menos_32_caracteres
-JWT_SECRET_KEY=otra_clave_segura_para_tokens
-
-# Configuración OSS
-OSS_SERVICE_URL=http://tu-servicio-oss.com
-OSS_API_KEY=tu-api-key
-```
-
-## 4. Despliegue
-
-Inicia el proyecto. El frontend escuchará internamente en el puerto **80** del servidor local `.37`.
+## 2. Clonar proyecto
 
 ```bash
-sudo docker compose up -d --build
+git clone https://github.com/erikstiven/EventsAdmg.git
+cd EventsAdmg
+git checkout main
 ```
 
-## 5. Configuración en el Servidor Apache (Proxy Externo)
+## 3. Revisar configuracion
 
-En el servidor que tiene la URL `https://eventos.ge-admg.com`, asegúrate de que el VirtualHost de Apache esté configurado de la siguiente manera para redirigir el tráfico al servidor local `.37`:
+El despliegue base usa `docker-compose.yml` con:
+
+- Backend interno en red Docker
+- Frontend/Nginx publicado en `80:80`
+- SQLite persistido en volumen `backend-data`
+
+Variables ya definidas en compose para backend:
+
+- `DATABASE_URL=sqlite+aiosqlite:////app/data/eventaccess.db`
+- `DEBUG=false`
+- `ENVIRONMENT=production`
+- `PORT=8000`
+
+Si necesitas variables adicionales (ej. `JWT_SECRET_KEY`, `PYTHON_BACKEND_URL`), agregalas en el servicio `backend` de `docker-compose.yml` o usa override.
+
+## 4. Levantar contenedores
+
+```bash
+docker compose up -d --build
+```
+
+## 5. Verificacion
+
+```bash
+docker compose ps
+docker compose logs -f backend
+docker compose logs -f frontend
+```
+
+Acceso esperado:
+
+- Aplicacion: `http://<IP_DEL_SERVIDOR>/`
+
+## 6. Proxy Apache externo (opcional)
+
+Si tienes un Apache frontal con dominio publico:
 
 ```apache
 <VirtualHost *:443>
     ServerName eventos.ge-admg.com
 
-    # Configuración SSL (Gestionada por Apache)
     SSLEngine on
     SSLCertificateFile /path/to/cert.pem
     SSLCertificateKeyFile /path/to/key.pem
 
-    # Proxy hacia el servidor local Docker
     ProxyPreserveHost On
     ProxyPass / http://10.100.46.37/
     ProxyPassReverse / http://10.100.46.37/
-
-    # Soporte para WebSockets (si el proyecto los usa en el futuro)
-    RewriteEngine On
-    RewriteCond %{HTTP:Upgrade} =websocket [NC]
-    RewriteRule /(.*)           ws://10.100.46.37/$1 [P,L]
 </VirtualHost>
 ```
 
-## ¿Hay que eliminar archivos?
+La topologia queda:
 
-**No**, no es necesario eliminar nada. La arquitectura actual es:
-`Usuario (HTTPS)` -> `Apache Proxy` -> `Nginx Docker (HTTP en puerto 80)` -> `Backend FastAPI`.
+`Usuario (HTTPS)` -> `Apache` -> `Nginx (contenedor frontend)` -> `FastAPI (contenedor backend)`
 
-Esta arquitectura es la recomendada porque:
-1.  **Apache** se encarga de los Certificados SSL y la seguridad perimetral.
-2.  **Nginx (Docker)** sirve los archivos estáticos de React de forma ultra rápida.
-3.  **FastAPI** está protegido detrás de dos capas de proxy.
+## Notas operativas
 
-## Notas de mantenimiento
-- Si necesitas ver logs del backend: `docker compose logs -f backend`
-- La base de datos persistirá en `.37` dentro de un volumen de Docker.
+- Persistencia DB: volumen Docker `backend-data`
+- Reinicio servicios:
+
+```bash
+docker compose restart
+```
+
+- Actualizacion de version:
+
+```bash
+git pull origin main
+docker compose up -d --build
+```
+
+Ultima actualizacion: 2026-02-23

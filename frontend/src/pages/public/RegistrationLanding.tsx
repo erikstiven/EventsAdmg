@@ -16,6 +16,7 @@ import {
   BaseModalHeader,
   BaseModalTitle,
 } from '@/components/ui/base-modal';
+import InvitationGroupStatusBadge from '@/components/InvitationGroupStatusBadge';
 import { useToast } from '@/hooks/use-toast';
 import { api } from '@/lib/api';
 
@@ -67,6 +68,38 @@ export default function RegistrationLanding() {
   const [confirmSubmitOpen, setConfirmSubmitOpen] = useState(false);
   const [showSaving, setShowSaving] = useState(false);
 
+  const normalizePublicStatus = (raw?: string) =>
+    (raw || '')
+      .toLowerCase()
+      .trim()
+      .replace(/_/g, ' ')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
+  const isPublicEditableStatus = (raw?: string) => {
+    const normalized = normalizePublicStatus(raw);
+    return (
+      normalized === 'pendiente completar' ||
+      normalized === 'en registro' ||
+      normalized === 'pendiente de actualizacion'
+    );
+  };
+
+  const lockedMessageByStatus = useMemo(() => {
+    const normalized = normalizePublicStatus(status);
+    if (!normalized) return 'El registro está cerrado y ya no puedes editar desde este enlace.';
+    if (normalized.includes('aprobado')) {
+      return 'La invitación ya fue aprobada y el registro quedó cerrado.';
+    }
+    if (normalized.includes('pendiente aprobacion')) {
+      return 'El registro ya fue enviado y está pendiente de revisión.';
+    }
+    if (normalized.includes('rechazado')) {
+      return 'La invitación fue rechazada y el enlace quedó bloqueado.';
+    }
+    return 'El registro está cerrado y ya no puedes editar desde este enlace.';
+  }, [status]);
+
   useEffect(() => {
     const load = async () => {
       if (!token) {
@@ -80,7 +113,7 @@ export default function RegistrationLanding() {
         setEventName(data.event_name || '');
         setGroupSize(data.group_size || 3);
         setStatus(data.status || '');
-        setLocked(['pendiente aprobación', 'pendiente aprobacion', 'completado', 'aprobado'].includes((data.status || '').toLowerCase()));
+        setLocked(!isPublicEditableStatus(data.status || ''));
         const titular: Participant = {
           name: data.titular_name || '',
           cedula: data.titular_identification || '',
@@ -139,10 +172,10 @@ export default function RegistrationLanding() {
     if (!showDoc || selectedIdx === null) return;
     const current = participants[selectedIdx];
     if (current?.docUrl) {
-      setSelectedDocPreview(current.docUrl);
+      replaceDocPreview(current.docUrl);
       setSelectedDocName(current.docName || 'Cédula cargada');
     } else {
-      setSelectedDocPreview('');
+      replaceDocPreview('');
       setSelectedDocName('');
     }
   }, [showDoc, selectedIdx, participants]);
@@ -151,10 +184,10 @@ export default function RegistrationLanding() {
     if (!showBio || selectedIdx === null) return;
     const current = participants[selectedIdx];
     if (current?.selfieUrl) {
-      setSelectedSelfiePreview(current.selfieUrl);
+      replaceSelfiePreview(current.selfieUrl);
       setSelectedSelfieName(current.selfieName || 'Selfie cargada');
     } else {
-      setSelectedSelfiePreview('');
+      replaceSelfiePreview('');
       setSelectedSelfieName('');
     }
   }, [showBio, selectedIdx, participants]);
@@ -187,6 +220,17 @@ export default function RegistrationLanding() {
     };
   }, [showDoc]);
 
+  useEffect(() => {
+    return () => {
+      if (selectedSelfiePreview.startsWith('blob:')) {
+        URL.revokeObjectURL(selectedSelfiePreview);
+      }
+      if (selectedDocPreview.startsWith('blob:')) {
+        URL.revokeObjectURL(selectedDocPreview);
+      }
+    };
+  }, [selectedSelfiePreview, selectedDocPreview]);
+
   const markSelfie = (idx: number, selfieUrl?: string, selfieName?: string) => {
     setParticipants((prev) =>
       prev.map((p, i) =>
@@ -208,6 +252,24 @@ export default function RegistrationLanding() {
     const maxMb = 5;
     if (file.size > maxMb * 1024 * 1024) return `La imagen supera ${maxMb}MB.`;
     return '';
+  };
+
+  const replaceSelfiePreview = (nextUrl: string) => {
+    setSelectedSelfiePreview((prev) => {
+      if (prev.startsWith('blob:') && prev !== nextUrl) {
+        URL.revokeObjectURL(prev);
+      }
+      return nextUrl;
+    });
+  };
+
+  const replaceDocPreview = (nextUrl: string) => {
+    setSelectedDocPreview((prev) => {
+      if (prev.startsWith('blob:') && prev !== nextUrl) {
+        URL.revokeObjectURL(prev);
+      }
+      return nextUrl;
+    });
   };
 
   const startSelfieCamera = async () => {
@@ -245,13 +307,13 @@ export default function RegistrationLanding() {
     if (!blob) return;
     setSelfieBlob(blob);
     setSelectedSelfieName(`selfie-${Date.now()}.jpg`);
-    setSelectedSelfiePreview(URL.createObjectURL(blob));
+    replaceSelfiePreview(URL.createObjectURL(blob));
   };
 
   const resetSelfieSelection = () => {
     setSelfieBlob(null);
     setSelectedSelfieName('');
-    setSelectedSelfiePreview('');
+    replaceSelfiePreview('');
     if (selfieInputRef.current) {
       selfieInputRef.current.value = '';
     }
@@ -277,7 +339,7 @@ export default function RegistrationLanding() {
     if (!blob) return;
     setDocBlob(blob);
     setSelectedDocName(`cedula-${Date.now()}.jpg`);
-    setSelectedDocPreview(URL.createObjectURL(blob));
+    replaceDocPreview(URL.createObjectURL(blob));
   };
 
   const startDocCamera = async () => {
@@ -301,7 +363,7 @@ export default function RegistrationLanding() {
   const resetDocSelection = () => {
     setDocBlob(null);
     setSelectedDocName('');
-    setSelectedDocPreview('');
+    replaceDocPreview('');
     if (docInputRef.current) {
       docInputRef.current.value = '';
     }
@@ -326,16 +388,6 @@ export default function RegistrationLanding() {
   const progreso = totalCupo ? Math.round((completos / totalCupo) * 100) : 0;
   const pendientes = Math.max(0, totalCupo - completos);
   const canSubmit = !locked && completos > 0;
-
-  const normalizeStatusLabel = (value?: string) => {
-    if (!value) return '';
-    const normalized = value.toLowerCase().replace('_', ' ').trim();
-    if (normalized.includes('actualiz')) return 'Pendiente de actualización';
-    if (normalized.includes('aprob')) return 'Pendiente aprobación';
-    if (normalized.includes('completado') || normalized.includes('aprobado')) return 'Completado';
-    if (normalized.includes('registro') || normalized.includes('proceso')) return 'En registro';
-    return 'Pendiente completar';
-  };
 
   const handleSubmit = async () => {
     if (!token) return;
@@ -414,18 +466,21 @@ export default function RegistrationLanding() {
               {status && (
                 <>
                   <span>•</span>
-                  <span>Estado: {normalizeStatusLabel(status)}</span>
+                  <span className="inline-flex items-center gap-2">
+                    Estado:
+                    <InvitationGroupStatusBadge status={status} />
+                  </span>
                 </>
               )}
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
             {locked ? (
-              <Alert className="border-slate-200 bg-slate-50 text-slate-700">
-                <AlertDescription className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4" /> Registro enviado. Ya no puedes editar.
-                </AlertDescription>
-              </Alert>
+                <Alert className="border-slate-200 bg-slate-50 text-slate-700">
+                  <AlertDescription className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4" /> {lockedMessageByStatus}
+                  </AlertDescription>
+                </Alert>
             ) : pendientes > 0 ? (
               <Alert className="border-amber-200 bg-amber-50 text-amber-700">
                 <AlertDescription className="flex items-center gap-2">
@@ -688,9 +743,9 @@ export default function RegistrationLanding() {
                   setSelectedSelfieName(file?.name || '');
                   if (file) {
                     const url = URL.createObjectURL(file);
-                    setSelectedSelfiePreview(url);
+                    replaceSelfiePreview(url);
                   } else {
-                    setSelectedSelfiePreview('');
+                    replaceSelfiePreview('');
                   }
                 }}
               />
@@ -878,9 +933,9 @@ export default function RegistrationLanding() {
                   setSelectedDocName(file?.name || '');
                   if (file) {
                     const url = URL.createObjectURL(file);
-                    setSelectedDocPreview(url);
+                    replaceDocPreview(url);
                   } else {
-                    setSelectedDocPreview('');
+                    replaceDocPreview('');
                   }
                 }}
               />

@@ -359,6 +359,10 @@ async def ensure_performance_indexes():
         "CREATE INDEX IF NOT EXISTS idx_checkins_attendee ON checkins(attendee_id)",
         "CREATE INDEX IF NOT EXISTS idx_checkins_group_person ON checkins(invitation_group_person_id)",
         "CREATE INDEX IF NOT EXISTS idx_checkins_qr_token_used ON checkins(qr_token_used)",
+        # Invitation state machine / audit
+        "CREATE INDEX IF NOT EXISTS idx_invitations_status_updated ON invitations(status, updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_invitations_revoked_at ON invitations(revoked_at)",
+        "CREATE INDEX IF NOT EXISTS idx_invitation_status_hist_invitation_changed ON invitation_status_history(invitation_id, changed_at)",
         # Biometric shadow mode
         "CREATE INDEX IF NOT EXISTS idx_biometric_embeddings_person_active ON biometric_embeddings(person_id, is_active)",
         "CREATE INDEX IF NOT EXISTS idx_biometric_attempts_person_created ON biometric_attempts(person_id, created_at)",
@@ -435,20 +439,22 @@ async def seed_rbac_catalog():
             links_result = await session.execute(select(RolePermission))
             existing_links = {(link.role_id, link.permission_id) for link in links_result.scalars().all()}
             links_added = 0
-            for role_code, perm_codes in DEFAULT_ROLE_PERMISSIONS.items():
-                role = existing_roles.get(role_code)
-                if not role:
-                    continue
-                for perm_code in perm_codes:
-                    perm = existing_perms.get(perm_code)
-                    if not perm:
+            # Respect manual RBAC edits. Seed default links only on first bootstrap.
+            if not existing_links:
+                for role_code, perm_codes in DEFAULT_ROLE_PERMISSIONS.items():
+                    role = existing_roles.get(role_code)
+                    if not role:
                         continue
-                    key = (role.id, perm.id)
-                    if key in existing_links:
-                        continue
-                    session.add(RolePermission(role_id=role.id, permission_id=perm.id))
-                    existing_links.add(key)
-                    links_added += 1
+                    for perm_code in perm_codes:
+                        perm = existing_perms.get(perm_code)
+                        if not perm:
+                            continue
+                        key = (role.id, perm.id)
+                        if key in existing_links:
+                            continue
+                        session.add(RolePermission(role_id=role.id, permission_id=perm.id))
+                        existing_links.add(key)
+                        links_added += 1
 
             if changed or links_added:
                 await session.commit()

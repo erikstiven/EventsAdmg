@@ -242,6 +242,7 @@ async def validate_qr_code(
 
 @router.post("/qr-checkin", response_model=QRCheckInResponse)
 async def qr_checkin(
+    request: Request,
     data: QRCheckInRequest,
     current_user: UserResponse = Depends(get_current_user),
     _perm: UserResponse = Depends(require_any_permission("checkin.scan")),
@@ -292,14 +293,13 @@ async def qr_checkin(
             }
             checkin = await checkins_service.create(checkin_data, invitation.user_id)
 
-            await invitations_service.update(
+            await invitations_service.mark_used(
                 invitation.id,
-                {
-                    "status": "USADO",
-                    "used_at": now_str,
-                    "updated_at": now_str,
-                },
-                invitation.user_id,
+                changed_by=str(current_user.id),
+                user_id=invitation.user_id,
+                reason="qr_checkin",
+                endpoint=str(request.url.path),
+                request_id=request.headers.get("x-request-id"),
             )
             return QRCheckInResponse(
                 success=True,
@@ -516,7 +516,7 @@ async def biometric_validation(
     _perm: UserResponse = Depends(require_any_permission("checkin.biometric")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Perform biometric facial validation in shadow mode (STAFF only)."""
+    """Perform biometric facial validation with strict enforcement (STAFF only)."""
     try:
         invitations_service = InvitationsService(db)
         attendees_service = AttendeesService(db)
@@ -572,7 +572,6 @@ async def biometric_validation(
         )
         validation_result = compare_result["result"]
         match_score = compare_result.get("score")
-        enforcement_enabled = bool(compare_result.get("enforcement"))
         threshold = float(compare_result.get("threshold") or facial_service.match_threshold)
 
         # Create biometric validation record
@@ -583,7 +582,7 @@ async def biometric_validation(
             "validation_result": validation_result,
             "ai_response": json.dumps(
                 {
-                    "mode": "enforcement" if enforcement_enabled else "shadow",
+                    "mode": "enforcement",
                     "result": validation_result,
                     "score": match_score,
                     "threshold": threshold,
@@ -596,9 +595,7 @@ async def biometric_validation(
 
         await biometric_validation_service.create(biometric_data, invitation.user_id)
 
-        allow_access = True
-        if enforcement_enabled:
-            allow_access = validation_result == "MATCH"
+        allow_access = validation_result == "MATCH"
 
         if allow_access:
             # Create check-in record
@@ -610,10 +607,10 @@ async def biometric_validation(
                 "staff_user_id": current_user.id,
                 "gate": data.gate,
                 "biometric_validated": validation_result == "MATCH",
-                "validation_method": "FACIAL" if enforcement_enabled else "FACIAL_SHADOW",
+                "validation_method": "FACIAL",
                 "validation_notes": (
                     f"Facial result={validation_result}, score={match_score}, threshold={threshold}, "
-                    f"mode={'enforcement' if enforcement_enabled else 'shadow'}"
+                    "mode=enforcement"
                 ),
                 "checked_in_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -622,25 +619,20 @@ async def biometric_validation(
             checkin = await checkins_service.create(checkin_data, invitation.user_id)
             
             # Update invitation status to USADO
-            await invitations_service.update(
+            await invitations_service.mark_used(
                 invitation.id,
-                {
-                    "status": "USADO",
-                    "used_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                },
-                invitation.user_id
+                changed_by=str(current_user.id),
+                user_id=invitation.user_id,
+                reason="facial_checkin",
+                endpoint=str(request.url.path),
+                request_id=request.headers.get("x-request-id"),
             )
             
             return BiometricValidationResponse(
                 success=True,
                 validation_result=validation_result,
                 match_score=match_score,
-                message=(
-                    "✅ Validación biométrica registrada en modo sombra. Acceso permitido."
-                    if not enforcement_enabled
-                    else "✅ Validación biométrica exitosa. Acceso permitido."
-                ),
+                message="✅ Validación biométrica exitosa. Acceso permitido.",
                 checkin_id=checkin.id,
                 require_manual=False
             )
@@ -661,6 +653,7 @@ async def biometric_validation(
 
 @router.post("/manual-validate", response_model=ManualValidationResponse)
 async def manual_validation(
+    request: Request,
     data: ManualValidationRequest,
     current_user: UserResponse = Depends(get_current_user),
     _perm: UserResponse = Depends(require_any_permission("checkin.manual_approve")),
@@ -708,14 +701,13 @@ async def manual_validation(
         checkin = await checkins_service.create(checkin_data, invitation.user_id)
         
         # Update invitation status to USADO
-        await invitations_service.update(
+        await invitations_service.mark_used(
             invitation.id,
-            {
-                "status": "USADO",
-                "used_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            },
-            invitation.user_id
+            changed_by=str(current_user.id),
+            user_id=invitation.user_id,
+            reason="manual_checkin",
+            endpoint=str(request.url.path),
+            request_id=request.headers.get("x-request-id"),
         )
         
         return ManualValidationResponse(

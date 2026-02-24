@@ -21,7 +21,6 @@ export default function EmailSettings() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     BIOMETRIC_MATCH_THRESHOLD: '0.60',
-    BIOMETRIC_ENFORCEMENT: false,
     BIOMETRIC_MODEL_NAME: 'buffalo_l',
     SMTP_HOST: '',
     SMTP_PORT: '587',
@@ -42,6 +41,23 @@ export default function EmailSettings() {
       return value.replace(/\\n/g, '<br>');
     }
     return value;
+  };
+
+  const decodeEscapedHtmlTemplate = (value: string) => {
+    if (!value) return value;
+    const hasEscapedTag = /&lt;\s*\/?\s*[a-z!/][^&]*&gt;/i.test(value);
+    if (!hasEscapedTag) return value;
+    try {
+      const temp = document.createElement('div');
+      temp.innerHTML = value;
+      const decoded = (temp.textContent || '').trim();
+      if (/<\s*\/?\s*[a-z][\s\S]*>/i.test(decoded)) {
+        return decoded;
+      }
+      return value;
+    } catch {
+      return value;
+    }
   };
 
   const insertVariable = (variable: string) => {
@@ -85,8 +101,6 @@ export default function EmailSettings() {
           ...prev,
           BIOMETRIC_MATCH_THRESHOLD:
             backendVars.BIOMETRIC_MATCH_THRESHOLD?.value || prev.BIOMETRIC_MATCH_THRESHOLD,
-          BIOMETRIC_ENFORCEMENT:
-            (backendVars.BIOMETRIC_ENFORCEMENT?.value || 'false').toLowerCase() === 'true',
           BIOMETRIC_MODEL_NAME:
             backendVars.BIOMETRIC_MODEL_NAME?.value || prev.BIOMETRIC_MODEL_NAME,
           SMTP_HOST: backendVars.SMTP_HOST?.value || prev.SMTP_HOST,
@@ -133,7 +147,6 @@ export default function EmailSettings() {
 
       const updates: [string, string][] = [
         ['BIOMETRIC_MATCH_THRESHOLD', String(threshold)],
-        ['BIOMETRIC_ENFORCEMENT', form.BIOMETRIC_ENFORCEMENT ? 'true' : 'false'],
         ['BIOMETRIC_MODEL_NAME', form.BIOMETRIC_MODEL_NAME],
         ['SMTP_HOST', form.SMTP_HOST],
         ['SMTP_PORT', form.SMTP_PORT],
@@ -142,9 +155,9 @@ export default function EmailSettings() {
         ['SMTP_FROM', form.SMTP_FROM],
         ['SMTP_USE_TLS', form.SMTP_USE_TLS ? 'true' : 'false'],
         ['INVITATION_EMAIL_SUBJECT', form.INVITATION_EMAIL_SUBJECT],
-        ['INVITATION_EMAIL_TEMPLATE', form.INVITATION_EMAIL_TEMPLATE],
+        ['INVITATION_EMAIL_TEMPLATE', decodeEscapedHtmlTemplate(form.INVITATION_EMAIL_TEMPLATE)],
         ['INVITATION_QR_EMAIL_SUBJECT', form.INVITATION_QR_EMAIL_SUBJECT],
-        ['INVITATION_QR_EMAIL_TEMPLATE', form.INVITATION_QR_EMAIL_TEMPLATE],
+        ['INVITATION_QR_EMAIL_TEMPLATE', decodeEscapedHtmlTemplate(form.INVITATION_QR_EMAIL_TEMPLATE)],
       ];
       await Promise.all(updates.map(([key, value]) => api.settings.updateBackend(key, value)));
       toast({
@@ -222,15 +235,6 @@ export default function EmailSettings() {
                     placeholder="buffalo_l"
                     disabled={loading}
                   />
-                </div>
-                <div className="md:col-span-2 flex items-center gap-2">
-                  <Switch
-                    id="biometricEnforcement"
-                    checked={form.BIOMETRIC_ENFORCEMENT}
-                    onCheckedChange={(checked) => setForm((f) => ({ ...f, BIOMETRIC_ENFORCEMENT: checked }))}
-                    disabled={loading}
-                  />
-                  <Label htmlFor="biometricEnforcement">Activar enforcement estricto (bloquea si no hay match)</Label>
                 </div>
               </CardContent>
             </Card>
@@ -372,7 +376,7 @@ export default function EmailSettings() {
                           className="email-preview prose max-w-none text-sm"
                           dangerouslySetInnerHTML={{
                             __html:
-                              form.INVITATION_EMAIL_TEMPLATE ||
+                              decodeEscapedHtmlTemplate(form.INVITATION_EMAIL_TEMPLATE) ||
                               '<em>Escribe el contenido para ver la vista previa.</em>',
                           }}
                         />
@@ -450,7 +454,7 @@ export default function EmailSettings() {
                           className="email-preview prose max-w-none text-sm"
                           dangerouslySetInnerHTML={{
                             __html:
-                              form.INVITATION_QR_EMAIL_TEMPLATE ||
+                              decodeEscapedHtmlTemplate(form.INVITATION_QR_EMAIL_TEMPLATE) ||
                               '<em>Escribe el contenido para ver la vista previa.</em>',
                           }}
                         />

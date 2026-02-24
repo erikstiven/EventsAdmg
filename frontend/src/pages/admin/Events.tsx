@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { Layout } from '@/components/Layout';
 import LoadingSpinner from '@/components/LoadingSpinner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,12 +47,12 @@ export default function Events() {
     sort: '-event_date',
   });
 
-  useEffect(() => {
-    loadEvents();
-  }, []);
-
-  const loadEvents = async (overrideFilters?: Partial<typeof filters>) => {
+  const loadEvents = useCallback(async (
+    overrideFilters?: Partial<typeof filters>,
+    options?: { silent?: boolean }
+  ) => {
     try {
+      if (!options?.silent) setLoading(true);
       const f = { ...filters, ...(overrideFilters || {}) };
       const response = await api.events.list({
         search: f.search || undefined,
@@ -63,15 +63,29 @@ export default function Events() {
       });
       setEvents(response.items || []);
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: 'No se pudieron cargar los eventos',
-        variant: 'destructive',
-      });
+      if (!options?.silent) {
+        toast({
+          title: 'Error',
+          description: 'No se pudieron cargar los eventos',
+          variant: 'destructive',
+        });
+      }
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
     }
-  };
+  }, [filters, toast]);
+
+  useEffect(() => {
+    loadEvents();
+  }, [loadEvents]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (document.hidden) return;
+      loadEvents(undefined, { silent: true });
+    }, 15000);
+    return () => window.clearInterval(intervalId);
+  }, [loadEvents]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -349,18 +363,33 @@ export default function Events() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-2">
-                      <Button size="sm" variant="ghost" onClick={() => openDetail(event)}>
-                        <Eye className="h-4 w-4 mr-1" /> Ver
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => openEdit(event)}>
-                        <Pencil className="h-4 w-4 mr-1" /> Editar
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-slate-700 hover:bg-slate-100"
+                        onClick={() => openDetail(event)}
+                      >
+                        <Eye className="h-4 w-4 mr-1 text-slate-600" /> Ver
                       </Button>
                       <Button
                         size="sm"
-                        variant={event.status === 'ACTIVE' ? 'destructive' : 'secondary'}
+                        variant="outline"
+                        className="border-blue-200 text-blue-700 hover:bg-blue-50"
+                        onClick={() => openEdit(event)}
+                      >
+                        <Pencil className="h-4 w-4 mr-1 text-blue-600" /> Editar
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={event.status === 'ACTIVE' ? 'destructive' : 'outline'}
+                        className={
+                          event.status === 'ACTIVE'
+                            ? ''
+                            : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
+                        }
                         onClick={() => toggleStatus(event)}
                       >
-                        <Power className="h-4 w-4 mr-1" />
+                        <Power className={`h-4 w-4 mr-1 ${event.status === 'ACTIVE' ? '' : 'text-emerald-600'}`} />
                         {event.status === 'ACTIVE' ? 'Desactivar' : 'Activar'}
                       </Button>
                     </TableCell>

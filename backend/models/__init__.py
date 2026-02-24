@@ -5,6 +5,7 @@ from models.auth import User, OIDCState  # noqa: F401
 from models.events import Events  # noqa: F401
 from models.attendees import Attendees  # noqa: F401
 from models.invitations import Invitations  # noqa: F401
+from models.invitation_status_history import Invitation_status_history  # noqa: F401
 from models.checkins import Checkins  # noqa: F401
 from models.biometric_validations import Biometric_validations  # noqa: F401
 from models.biometric_embeddings import Biometric_embeddings  # noqa: F401

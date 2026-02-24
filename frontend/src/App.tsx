@@ -20,7 +20,7 @@ import RegistrationLandingMock from './pages/public/RegistrationLandingMock';
 import RegistrationLanding from './pages/public/RegistrationLanding';
 
 // Approver pages
-import PendingApprovals2 from './pages/approver/PendingApprovals2';
+import PendingApprovals from './pages/approver/PendingApprovals';
 
 // Staff pages
 import CheckIn2 from './pages/staff/CheckIn2';
@@ -195,17 +195,10 @@ function AppRoutes() {
         path="/approver/pending"
         element={
           <RoleRoute allowedRoles={['APROBADOR']} requiredPermissions={['approvals.read']}>
-            <PendingApprovals2 />
+            <PendingApprovals />
           </RoleRoute>
         }
       />
-      <Route
-        path="/approver/pending2"
-        element={
-          <Navigate to="/approver/pending" replace />
-        }
-      />
-      
       {/* Staff routes */}
       <Route
         path="/staff/checkin"

@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { api, InvitationDetail } from '@/lib/api';
 import { QRCodeDisplay } from '@/components/QRCodeDisplay';
+import InvitationStatusBadge from '@/components/InvitationStatusBadge';
 import { Calendar, MapPin, CheckCircle, Clock, XCircle } from 'lucide-react';
 import {
   Dialog,
@@ -89,18 +90,6 @@ export default function MyInvitations() {
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      GENERADO: 'bg-gray-100 text-gray-800',
-      ACTIVADO: 'bg-blue-100 text-blue-800',
-      PENDIENTE_APROBACION: 'bg-yellow-100 text-yellow-800',
-      APROBADO: 'bg-green-100 text-green-800',
-      RECHAZADO: 'bg-red-100 text-red-800',
-      USADO: 'bg-purple-100 text-purple-800',
-    };
-    return colors[status] || 'bg-gray-100 text-gray-800';
-  };
-
   if (loading) {
     return (
       <Layout>
@@ -172,13 +161,11 @@ export default function MyInvitations() {
               <CardContent className="space-y-3">
                 <div className="flex items-center gap-2 text-sm text-gray-600">
                   <Calendar className="h-4 w-4" />
-                  Creado: {new Date(invitation.created_at).toLocaleString()}
+                  Creado: {formatDateTime(invitation.created_at)}
                 </div>
                 
                 <div>
-                  <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${getStatusBadge(invitation.status)}`}>
-                    {invitation.status}
-                  </span>
+                  <InvitationStatusBadge status={invitation.status} className="px-3 py-1 rounded-full text-sm font-medium" />
                 </div>
 
                 {invitation.status === 'APROBADO' && (
@@ -241,3 +228,17 @@ export default function MyInvitations() {
     </Layout>
   );
 }
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return '-';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '-';
+    return new Intl.DateTimeFormat('es-EC', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(d);
+  };

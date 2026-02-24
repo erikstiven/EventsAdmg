@@ -19,7 +19,9 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
   return (
     <div className={`${containerClass} ${className}`.trim()}>
       <div className="text-center">
-        <InfinitySpin width="160" color="#1d4ed8" />
+        <div className="w-full flex justify-center">
+          <InfinitySpin width="160" color="#1d4ed8" />
+        </div>
         <p className="mt-4 text-gray-600">{message}</p>
       </div>
     </div>

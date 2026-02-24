@@ -44,7 +44,7 @@ export default function Attendees() {
     status === 'approved' ? 'Aprobado' : status === 'rejected' ? 'Rechazado' : 'Pendiente';
 
   const biometricLabel = (status: AttendeeOperationalItem['biometric_status']) =>
-    status === 'ok' ? 'Biometría OK' : 'Biometría faltante';
+    status === 'ok' ? 'Rostro registrado' : 'Sin rostro';
 
   const checkinLabel = (status: AttendeeOperationalItem['checkin_status']) =>
     status === 'checked_in' ? 'Ingresado' : 'No ingresado';
@@ -63,7 +63,7 @@ export default function Attendees() {
           <div>
             <h1 className="text-3xl font-bold">Panel operativo de asistentes</h1>
             <p className="text-sm text-gray-600">
-              Vista consolidada de aprobación, biometría y check-in.
+              Vista consolidada de aprobación, registro de rostro y check-in.
             </p>
           </div>
           <Badge variant="outline" className="px-3 py-1 text-sm">
@@ -110,7 +110,7 @@ export default function Attendees() {
               <Filter className="h-4 w-4" /> Filtros
             </CardTitle>
             <p className="text-xs text-gray-500">
-              Filtra por estado de aprobación, biometría y check-in. Los estados corresponden al flujo de invitación.
+              Filtra por estado de aprobación, registro de rostro y check-in. El rostro registrado no implica ingreso al evento.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
               <div className="space-y-1">
@@ -150,7 +150,7 @@ export default function Attendees() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <p className="text-xs text-gray-500">Biometría</p>
+                <p className="text-xs text-gray-500">Rostro</p>
                 <Select
                   value={filters.biometric}
                   onValueChange={(value) => setFilters((f) => ({ ...f, biometric: value, page: 1 }))}
@@ -160,8 +160,8 @@ export default function Attendees() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todas</SelectItem>
-                    <SelectItem value="ok">Biometría OK</SelectItem>
-                    <SelectItem value="missing">Faltante</SelectItem>
+                    <SelectItem value="ok">Rostro registrado</SelectItem>
+                    <SelectItem value="missing">Sin rostro</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -183,9 +183,10 @@ export default function Attendees() {
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-gray-500">Búsqueda</p>
-                <div className="flex items-center gap-2">
-                  <Search className="h-4 w-4 text-gray-400" />
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                   <Input
+                    className="pl-9"
                     placeholder="Nombre o documento"
                     value={filters.q}
                     onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value, page: 1 }))}
@@ -226,7 +227,7 @@ export default function Attendees() {
                       <TableHead>Documento</TableHead>
                       <TableHead>Evento</TableHead>
                       <TableHead>Aprobación</TableHead>
-                    <TableHead>Biometría</TableHead>
+                    <TableHead>Rostro</TableHead>
                     <TableHead>Ingreso</TableHead>
                     <TableHead>Fecha</TableHead>
                       <TableHead className="text-right">Acciones</TableHead>

@@ -75,7 +75,18 @@ def read_env_file(env_type: str) -> Dict[str, str]:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, value = line.split("=", 1)
-                env_vars[key.strip()] = value.strip()
+                raw_value = value.strip()
+                if (
+                    (raw_value.startswith('"') and raw_value.endswith('"'))
+                    or (raw_value.startswith("'") and raw_value.endswith("'"))
+                ):
+                    raw_value = raw_value[1:-1]
+                normalized_value = (
+                    raw_value.replace('\\"', '"')
+                    .replace("\\'", "'")
+                    .replace("\\n", "\n")
+                )
+                env_vars[key.strip()] = normalized_value
     return env_vars
 
 
@@ -88,7 +99,15 @@ def write_env_file(env_type: str, env_vars: Dict[str, str]):
 
     with open(env_file, "w", encoding="utf-8") as f:
         for key, value in env_vars.items():
-            f.write(f"{key}={value}\n")
+            safe_value = (
+                str(value)
+                .replace("\\", "\\\\")
+                .replace('"', '\\"')
+                .replace("\r\n", "\n")
+                .replace("\n", "\\n")
+            )
+            # Always quote to avoid dotenv truncation on '#', ';', spaces, etc.
+            f.write(f'{key}="{safe_value}"\n')
 
 
 @router.get("", response_model=EnvConfig)

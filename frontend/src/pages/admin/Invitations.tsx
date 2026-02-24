@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Layout } from '@/components/Layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import { QRCodeDisplay } from '@/components/QRCodeDisplay';
 import { CameraCapture } from '@/components/CameraCapture';
+import InvitationStatusBadge from '@/components/InvitationStatusBadge';
 
 export default function Invitations() {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -40,12 +41,9 @@ export default function Invitations() {
     attendee_id: '',
   });
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async (options?: { silent?: boolean }) => {
     try {
+      if (!options?.silent) setLoading(true);
       const [invitationsRes, eventsRes, attendeesRes] = await Promise.all([
         api.invitations.list(),
         api.events.list(),
@@ -55,15 +53,29 @@ export default function Invitations() {
       setEvents(eventsRes.items || []);
       setAttendees(attendeesRes.items || []);
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: 'No se pudieron cargar los datos',
-        variant: 'destructive',
-      });
+      if (!options?.silent) {
+        toast({
+          title: 'Error',
+          description: 'No se pudieron cargar los datos',
+          variant: 'destructive',
+        });
+      }
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
     }
-  };
+  }, [toast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (document.hidden) return;
+      loadData({ silent: true });
+    }, 15000);
+    return () => window.clearInterval(intervalId);
+  }, [loadData]);
 
   const handlePhotoCapture = (photoData: string) => {
     setBiometricPhoto(photoData);
@@ -133,20 +145,6 @@ export default function Invitations() {
       title: 'Copiado',
       description: `${label} copiado al portapapeles`,
     });
-  };
-
-  const getStatusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      GENERADO: 'bg-gray-100 text-gray-800',
-      ACTIVADO: 'bg-blue-100 text-blue-800',
-      PENDIENTE_APROBACION: 'bg-yellow-100 text-yellow-800',
-      APROBADO: 'bg-green-100 text-green-800',
-      RECHAZADO: 'bg-red-100 text-red-800',
-      USADO: 'bg-purple-100 text-purple-800',
-      REVOCADO: 'bg-orange-100 text-orange-800',
-      EXPIRADO: 'bg-gray-100 text-gray-800',
-    };
-    return colors[status] || 'bg-gray-100 text-gray-800';
   };
 
   if (loading) {
@@ -286,9 +284,7 @@ export default function Invitations() {
                   <p className="text-sm font-medium">{attendee?.full_name || 'Asistente'}</p>
                   <p className="text-xs text-gray-500">{attendee?.email}</p>
                   <div className="pt-2 flex items-center gap-2">
-                    <span className={`inline-block px-2 py-1 rounded text-xs ${getStatusBadge(invitation.status)}`}>
-                      {invitation.status}
-                    </span>
+                    <InvitationStatusBadge status={invitation.status} className="px-2 py-1 text-xs rounded" />
                     {invitation.biometric_photo && (
                       <span className="inline-block px-2 py-1 rounded text-xs bg-blue-100 text-blue-800">
                         🔐 Biométrico

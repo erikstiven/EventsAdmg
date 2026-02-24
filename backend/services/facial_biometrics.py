@@ -23,10 +23,10 @@ logger = logging.getLogger(__name__)
 
 class FacialBiometricsService:
     """
-    Controlled facial biometrics integration for shadow mode:
+    Controlled facial biometrics integration with strict enforcement:
     - Register embedding if a valid face is available.
     - Compare 1:1 against the active embedding when present.
-    - Record attempts for observability, without blocking by default.
+    - Record attempts for observability.
     """
 
     _face_app = None
@@ -39,12 +39,7 @@ class FacialBiometricsService:
         self.model_name = os.environ.get("BIOMETRIC_MODEL_NAME", "buffalo_l")
         self.model_version = os.environ.get("BIOMETRIC_MODEL_VERSION", f"insightface-{self.model_name}")
         self.match_threshold = float(os.environ.get("BIOMETRIC_MATCH_THRESHOLD", "0.35"))
-        self.enforcement_enabled = os.environ.get("BIOMETRIC_ENFORCEMENT", "false").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        self.enforcement_enabled = True
 
     @classmethod
     def _get_np(cls):

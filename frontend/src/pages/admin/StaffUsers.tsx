@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { Layout } from '@/components/Layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -19,6 +19,21 @@ type StaffUser = {
   is_active: boolean;
   created_at?: string;
   last_login?: string;
+};
+
+const formatDateTime = (value?: string | null) => {
+  if (!value) return '-';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '-';
+  return new Intl.DateTimeFormat('es-EC', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(d);
 };
 
 export default function StaffUsers() {
@@ -42,9 +57,9 @@ export default function StaffUsers() {
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  const load = async () => {
+  const load = useCallback(async (options?: { silent?: boolean }) => {
     try {
-      setLoading(true);
+      if (!options?.silent) setLoading(true);
       const res = await api.staffUsers.list({
         skip: (page - 1) * pageSize,
         limit: pageSize,
@@ -53,21 +68,31 @@ export default function StaffUsers() {
       setItems(res.items || []);
       setTotal(res.total || 0);
     } catch (e: any) {
-      toast({
-        title: 'Error',
-        description: e?.message || 'No se pudo cargar personal operativo.',
-        variant: 'destructive',
-      });
+      if (!options?.silent) {
+        toast({
+          title: 'Error',
+          description: e?.message || 'No se pudo cargar personal operativo.',
+          variant: 'destructive',
+        });
+      }
       setItems([]);
       setTotal(0);
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
     }
-  };
+  }, [page, pageSize, search, toast]);
 
   useEffect(() => {
     load();
-  }, [page, pageSize, search]);
+  }, [load]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (document.hidden) return;
+      load({ silent: true });
+    }, 15000);
+    return () => window.clearInterval(intervalId);
+  }, [load]);
 
   const openCreate = () => {
     setEditing(null);
@@ -208,7 +233,7 @@ export default function StaffUsers() {
                           {row.is_active ? 'Activo' : 'Inactivo'}
                         </Badge>
                       </TableCell>
-                      <TableCell>{row.last_login ? new Date(row.last_login).toLocaleString() : '-'}</TableCell>
+                      <TableCell>{formatDateTime(row.last_login)}</TableCell>
                       <TableCell className="text-right space-x-2">
                         <Button size="sm" variant="outline" onClick={() => openEdit(row)}>
                           Editar

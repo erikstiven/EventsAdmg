@@ -13,7 +13,7 @@ const approvalLabel = (status: AttendeeOperationalItem['invitation_status']) =>
   status === 'approved' ? 'Aprobado' : status === 'rejected' ? 'Rechazado' : 'Pendiente';
 
 const biometricLabel = (status: AttendeeOperationalItem['biometric_status']) =>
-  status === 'ok' ? 'Biometría OK' : 'Biometría faltante';
+  status === 'ok' ? 'Rostro registrado' : 'Sin rostro';
 
 const checkinLabel = (status: AttendeeOperationalItem['checkin_status']) =>
   status === 'checked_in' ? 'Ingresado' : 'No ingresado';

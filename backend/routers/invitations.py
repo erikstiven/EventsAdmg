@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from core.config import settings
 from dependencies.permissions import require_any_permission
 from services.invitations import InvitationsService
 from dependencies.auth import get_current_user
@@ -18,6 +19,15 @@ from schemas.auth import UserResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/entities/invitations", tags=["invitations"])
+
+
+def _assert_entities_mutation_allowed(current_user: UserResponse) -> None:
+    if settings.environment.lower() == "production":
+        raise HTTPException(status_code=403, detail="Entity invitation mutation endpoints are disabled in production")
+    if not bool(getattr(current_user, "is_superuser", False)):
+        role = str(getattr(current_user, "role", "")).upper()
+        if role != "ADMIN":
+            raise HTTPException(status_code=403, detail="Only ADMIN can mutate entity invitations endpoints")
 
 
 # ---------- Pydantic Schemas ----------
@@ -218,6 +228,7 @@ async def create_invitations(
 ):
     """Create a new invitations"""
     logger.debug(f"Creating new invitations with data: {data}")
+    _assert_entities_mutation_allowed(current_user)
     
     service = InvitationsService(db)
     try:
@@ -244,6 +255,7 @@ async def create_invitationss_batch(
 ):
     """Create multiple invitationss in a single request"""
     logger.debug(f"Batch creating {len(request.items)} invitationss")
+    _assert_entities_mutation_allowed(current_user)
     
     service = InvitationsService(db)
     results = []
@@ -271,6 +283,7 @@ async def update_invitationss_batch(
 ):
     """Update multiple invitationss in a single request (requires ownership)"""
     logger.debug(f"Batch updating {len(request.items)} invitationss")
+    _assert_entities_mutation_allowed(current_user)
     
     service = InvitationsService(db)
     results = []
@@ -285,6 +298,8 @@ async def update_invitationss_batch(
         
         logger.info(f"Batch updated {len(results)} invitationss successfully")
         return results
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch update: {str(e)}", exc_info=True)
@@ -301,6 +316,7 @@ async def update_invitations(
 ):
     """Update an existing invitations (requires ownership)"""
     logger.debug(f"Updating invitations {id} with data: {data}")
+    _assert_entities_mutation_allowed(current_user)
 
     service = InvitationsService(db)
     try:
@@ -332,18 +348,37 @@ async def delete_invitationss_batch(
 ):
     """Delete multiple invitationss by their IDs (requires ownership)"""
     logger.debug(f"Batch deleting {len(request.ids)} invitationss")
+    _assert_entities_mutation_allowed(current_user)
     
     service = InvitationsService(db)
     deleted_count = 0
+    failed_ids: list[int] = []
     
     try:
         for item_id in request.ids:
-            success = await service.delete(item_id, user_id=str(current_user.id))
-            if success:
-                deleted_count += 1
+            try:
+                success = await service.delete(
+                    item_id,
+                    user_id=str(current_user.id),
+                    changed_by=str(current_user.id),
+                    reason="entity_batch_delete",
+                    endpoint="/api/v1/entities/invitations/batch",
+                )
+                if success:
+                    deleted_count += 1
+                else:
+                    failed_ids.append(item_id)
+            except HTTPException:
+                failed_ids.append(item_id)
         
         logger.info(f"Batch deleted {deleted_count} invitationss successfully")
-        return {"message": f"Successfully deleted {deleted_count} invitationss", "deleted_count": deleted_count}
+        return {
+            "message": f"Successfully deleted {deleted_count} invitationss",
+            "deleted_count": deleted_count,
+            "failed_ids": failed_ids,
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
@@ -359,10 +394,17 @@ async def delete_invitations(
 ):
     """Delete a single invitations by ID (requires ownership)"""
     logger.debug(f"Deleting invitations with id: {id}")
+    _assert_entities_mutation_allowed(current_user)
     
     service = InvitationsService(db)
     try:
-        success = await service.delete(id, user_id=str(current_user.id))
+        success = await service.delete(
+            id,
+            user_id=str(current_user.id),
+            changed_by=str(current_user.id),
+            reason="entity_delete",
+            endpoint=f"/api/v1/entities/invitations/{id}",
+        )
         if not success:
             logger.warning(f"Invitations with id {id} not found for deletion")
             raise HTTPException(status_code=404, detail="Invitations not found")

@@ -6,6 +6,8 @@ export function useAttendeesOperational(filters: AttendeeOperationalFilters) {
     queryKey: ['attendeesOperational', filters],
     queryFn: () => getOperational(filters),
     staleTime: 15000,
+    refetchInterval: 15000,
+    refetchIntervalInBackground: false,
     placeholderData: keepPreviousData,
   });
 }

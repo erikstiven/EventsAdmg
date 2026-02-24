@@ -2,6 +2,9 @@
 import logging
 import secrets
 import hashlib
+import time
+import uuid
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
@@ -10,6 +13,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 
 from core.database import get_db
+from models.security_audit_logs import Security_audit_logs
 from dependencies.auth import get_current_user
 from dependencies.permissions import require_any_permission
 from schemas.auth import UserResponse
@@ -22,6 +26,37 @@ from services.facial_biometrics import FacialBiometricsService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/invitations", tags=["invitations"])
+
+_ACTIVATION_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
+_ACTIVATION_BLOCK_UNTIL: dict[str, float] = {}
+_ACTIVATION_WINDOW_SECONDS = 300
+_ACTIVATION_MAX_ATTEMPTS = 6
+_ACTIVATION_BLOCK_SECONDS = 900
+
+
+def _activation_key(ip_address: str, email_or_phone: str) -> str:
+    normalized = (email_or_phone or "").strip().lower()
+    return f"{ip_address}|{normalized}"
+
+
+def _is_activation_blocked(key: str) -> bool:
+    blocked_until = _ACTIVATION_BLOCK_UNTIL.get(key, 0.0)
+    return blocked_until > time.time()
+
+
+def _register_activation_failure(key: str) -> None:
+    now = time.time()
+    q = _ACTIVATION_ATTEMPTS[key]
+    q.append(now)
+    while q and (now - q[0] > _ACTIVATION_WINDOW_SECONDS):
+        q.popleft()
+    if len(q) >= _ACTIVATION_MAX_ATTEMPTS:
+        _ACTIVATION_BLOCK_UNTIL[key] = now + _ACTIVATION_BLOCK_SECONDS
+
+
+def _clear_activation_failures(key: str) -> None:
+    _ACTIVATION_ATTEMPTS.pop(key, None)
+    _ACTIVATION_BLOCK_UNTIL.pop(key, None)
 
 
 class GenerateInvitationRequest(BaseModel):
@@ -78,8 +113,21 @@ class InvitationDetailResponse(BaseModel):
     biometric_photo: Optional[str] = None
 
 
+class InvitationStatusHistoryResponse(BaseModel):
+    id: int
+    invitation_id: int
+    from_status: Optional[str] = None
+    to_status: str
+    changed_by: str
+    changed_at: datetime
+    reason: Optional[str] = None
+    endpoint: Optional[str] = None
+    request_id: Optional[str] = None
+
+
 @router.post("/generate", response_model=GenerateInvitationResponse)
 async def generate_invitation(
+    request: Request,
     data: GenerateInvitationRequest,
     current_user: UserResponse = Depends(get_current_user),
     _perm: UserResponse = Depends(require_any_permission("invitations.create")),
@@ -136,7 +184,14 @@ async def generate_invitation(
             "updated_at": datetime.now(timezone.utc),
         }
         
-        invitation = await invitations_service.create(invitation_data, attendee.user_id)
+        invitation = await invitations_service.create(
+            invitation_data,
+            attendee.user_id,
+            changed_by=str(current_user.id),
+            reason="generated",
+            endpoint=str(request.url.path),
+            request_id=request.headers.get("x-request-id") or str(uuid.uuid4()),
+        )
 
         # Shadow mode: register attendee embedding if a biometric image was provided.
         if biometric_photo_url:
@@ -171,6 +226,7 @@ async def generate_invitation(
 
 @router.post("/activate", response_model=ActivateInvitationResponse)
 async def activate_invitation(
+    request: Request,
     data: ActivateInvitationRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -178,6 +234,15 @@ async def activate_invitation(
     try:
         email_or_phone = data.email_or_phone.strip()
         activation_code = data.activation_code.strip()
+        ip_address = request.client.host if request.client else "unknown"
+        activation_attempt_key = _activation_key(ip_address, email_or_phone)
+        request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+
+        if _is_activation_blocked(activation_attempt_key):
+            raise HTTPException(
+                status_code=429,
+                detail="Demasiados intentos fallidos. Intente nuevamente en unos minutos.",
+            )
         
         logger.info(f"🔍 Intentando activación - Email/Teléfono: '{email_or_phone}', Código: '{activation_code}'")
         
@@ -197,6 +262,21 @@ async def activate_invitation(
         
         if not attendee:
             logger.warning(f"❌ Asistente no encontrado: '{email_or_phone}'")
+            _register_activation_failure(activation_attempt_key)
+            db.add(
+                Security_audit_logs(
+                    actor_user_id="anonymous",
+                    event_type="INVITATION_ACTIVATION_FAILED",
+                    target_type="INVITATION_ACTIVATION",
+                    target_id=email_or_phone,
+                    endpoint=str(request.url.path),
+                    method=request.method,
+                    details_json='{"reason":"attendee_not_found"}',
+                    ip_address=ip_address,
+                    user_agent=request.headers.get("user-agent"),
+                )
+            )
+            await db.commit()
             raise HTTPException(status_code=404, detail="No se encontró un asistente registrado con ese correo o teléfono.")
         
         logger.info(f"✅ Asistente encontrado: ID={attendee.id}, Nombre={attendee.full_name}, Email DB={attendee.email}")
@@ -212,6 +292,21 @@ async def activate_invitation(
         
         if not matching_invitation:
             logger.warning(f"❌ No se encontró invitación válida para el código '{activation_code}'")
+            _register_activation_failure(activation_attempt_key)
+            db.add(
+                Security_audit_logs(
+                    actor_user_id=str(attendee.user_id) if attendee else "anonymous",
+                    event_type="INVITATION_ACTIVATION_FAILED",
+                    target_type="INVITATION_ACTIVATION",
+                    target_id=str(attendee.id) if attendee else email_or_phone,
+                    endpoint=str(request.url.path),
+                    method=request.method,
+                    details_json='{"reason":"invalid_activation_code"}',
+                    ip_address=ip_address,
+                    user_agent=request.headers.get("user-agent"),
+                )
+            )
+            await db.commit()
             # Log de invitaciones disponibles para depuración
             all_inv_result = await db.execute(select(Invitations).where(Invitations.attendee_id == attendee.id))
             all_invs = all_inv_result.scalars().all()
@@ -226,24 +321,52 @@ async def activate_invitation(
 
         if matching_invitation.status != "GENERADO":
             logger.warning(f"❌ La invitación {matching_invitation.id} ya tiene estado {matching_invitation.status}")
+            _register_activation_failure(activation_attempt_key)
+            db.add(
+                Security_audit_logs(
+                    actor_user_id=str(attendee.user_id),
+                    event_type="INVITATION_ACTIVATION_FAILED",
+                    target_type="INVITATION",
+                    target_id=str(matching_invitation.id),
+                    endpoint=str(request.url.path),
+                    method=request.method,
+                    details_json=f'{{"reason":"invalid_current_status","status":"{matching_invitation.status}"}}',
+                    ip_address=ip_address,
+                    user_agent=request.headers.get("user-agent"),
+                )
+            )
+            await db.commit()
             raise HTTPException(
                 status_code=400, 
                 detail=f"Esta invitación ya ha sido procesada (Estado: {matching_invitation.status})."
             )
         
-        # Actualizar estado a PENDIENTE_APROBACION
-        # Usamos el servicio pero sin pasar user_id para evitar el check de propiedad, 
-        # ya que la validación se hizo via activation_code
-        updated = await invitations_service.update(
+        updated = await invitations_service.activate_invitation(
             matching_invitation.id,
-            {
-                "status": "PENDIENTE_APROBACION",
-                "updated_at": datetime.now(timezone.utc),
-            }
+            changed_by=str(attendee.user_id),
+            reason="activation_code_validated",
+            endpoint=str(request.url.path),
+            request_id=request_id,
         )
         
         if not updated:
             raise HTTPException(status_code=500, detail="Error crítico al actualizar la invitación.")
+
+        _clear_activation_failures(activation_attempt_key)
+        db.add(
+            Security_audit_logs(
+                actor_user_id=str(attendee.user_id),
+                event_type="INVITATION_ACTIVATED",
+                target_type="INVITATION",
+                target_id=str(updated.id),
+                endpoint=str(request.url.path),
+                method=request.method,
+                details_json='{"result":"success"}',
+                ip_address=ip_address,
+                user_agent=request.headers.get("user-agent"),
+            )
+        )
+        await db.commit()
 
         logger.info(f"✅ Activación exitosa! ID={updated.id}, Nuevo estado={updated.status}")
         
@@ -257,11 +380,6 @@ async def activate_invitation(
         raise
     except Exception as e:
         logger.error(f"❌ Error en activación: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Error activating invitation: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -311,6 +429,7 @@ async def get_pending_approvals(
 
 @router.post("/approve", response_model=ApprovalResponse)
 async def approve_or_reject_invitation(
+    request: Request,
     data: ApprovalRequest,
     current_user: UserResponse = Depends(get_current_user),
     _perm: UserResponse = Depends(require_any_permission("approvals.decide")),
@@ -325,22 +444,14 @@ async def approve_or_reject_invitation(
         if not invitation:
             raise HTTPException(status_code=404, detail="Invitation not found")
         
-        if invitation.status != "PENDIENTE_APROBACION":
-            raise HTTPException(status_code=400, detail="Invitation is not pending approval")
-        
-        # Update status
-        new_status = "APROBADO" if data.approved else "RECHAZADO"
-        update_data = {
-            "status": new_status,
-            "approved_by": current_user.id,
-            "approved_at": datetime.now(timezone.utc),
-            "updated_at": datetime.now(timezone.utc),
-        }
-        
-        if not data.approved and data.rejection_reason:
-            update_data["rejection_reason"] = data.rejection_reason
-        
-        updated = await invitations_service.update(data.invitation_id, update_data, invitation.user_id)
+        updated = await invitations_service.decide_approval(
+            data.invitation_id,
+            approved=data.approved,
+            changed_by=str(current_user.id),
+            rejection_reason=data.rejection_reason,
+            endpoint=str(request.url.path),
+            request_id=request.headers.get("x-request-id") or str(uuid.uuid4()),
+        )
         
         return ApprovalResponse(
             success=True,
@@ -392,3 +503,37 @@ async def get_my_invitations(
     except Exception as e:
         logger.error(f"Error getting my invitations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{invitation_id}/status-history", response_model=List[InvitationStatusHistoryResponse])
+async def get_invitation_status_history(
+    invitation_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    _perm: UserResponse = Depends(require_any_permission("invitations.read", "audit.read")),
+    db: AsyncSession = Depends(get_db),
+):
+    invitations_service = InvitationsService(db)
+    invitation = await invitations_service.get_by_id(invitation_id)
+    if not invitation:
+        raise HTTPException(status_code=404, detail="Invitation not found")
+
+    if invitation.user_id != current_user.id and not bool(getattr(current_user, "is_superuser", False)):
+        role = str(getattr(current_user, "role", "")).upper()
+        if role != "ADMIN":
+            raise HTTPException(status_code=403, detail="Not enough permissions to view this history")
+
+    rows = await invitations_service.get_status_history(invitation_id)
+    return [
+        InvitationStatusHistoryResponse(
+            id=row.id,
+            invitation_id=row.invitation_id,
+            from_status=row.from_status,
+            to_status=row.to_status,
+            changed_by=row.changed_by,
+            changed_at=row.changed_at,
+            reason=row.reason,
+            endpoint=row.endpoint,
+            request_id=row.request_id,
+        )
+        for row in rows
+    ]

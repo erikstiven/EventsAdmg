@@ -1,5 +1,4 @@
 import logging
-import logging
 import os
 from datetime import datetime
 from typing import List, Optional
@@ -92,6 +91,7 @@ class InvitationGroupEditData(BaseModel):
 class InvitationGroupResponse(BaseModel):
     id: int
     event_id: int
+    event_name: Optional[str] = None
     titular_name: str
     titular_identification: str
     fingerprint_code: Optional[str] = None
@@ -224,6 +224,14 @@ class InvitationGroupStatusHistoryListResponse(BaseModel):
 
 async def _serialize_invitation_group(item, service: InvitationGroupsService) -> dict:
     companions = await service.get_companions_payload(item.id)
+    event_name = f"Evento {item.event_id}"
+    try:
+        result = await service.db.execute(select(Events).where(Events.id == item.event_id))
+        event = result.scalar_one_or_none()
+        if event and getattr(event, "name", None):
+            event_name = event.name
+    except Exception:
+        pass
     status_label = invitation_group_status_label_from_id(
         getattr(item, "status_id", None),
         default=normalize_invitation_group_status(getattr(item, "status", None), default="Pendiente completar"),
@@ -231,6 +239,7 @@ async def _serialize_invitation_group(item, service: InvitationGroupsService) ->
     return {
         "id": item.id,
         "event_id": item.event_id,
+        "event_name": event_name,
         "titular_name": item.titular_name,
         "titular_identification": item.titular_identification,
         "fingerprint_code": item.fingerprint_code,
@@ -347,14 +356,13 @@ async def get_pending_approvals(
             default=normalize_invitation_group_status(getattr(item, "status", None), default="Pendiente completar"),
         )
         status_value = status_label.lower().replace("_", " ").strip()
+        # Approver queue should include only actionable states for reviewer decisions.
         if status_value not in {
             "pendiente aprobación",
             "pendiente aprobacion",
             "pendiente de actualización",
             "pendiente de actualizacion",
-            "pendiente completar",
             "aprobado parcial",
-            "aprobado",
         }:
             continue
         pending.append(await _serialize_invitation_group(item, service))
@@ -626,14 +634,17 @@ async def upload_public_media(
 ):
     service = InvitationGroupsService(db)
     file_bytes = await file.read()
-    obj = await service.upload_media_by_token(
-        token_plain=token,
-        role=role,
-        kind=kind,
-        file_bytes=file_bytes,
-        original_name=file.filename or "upload.jpg",
-        companion_index=companion_index,
-    )
+    try:
+        obj = await service.upload_media_by_token(
+            token_plain=token,
+            role=role,
+            kind=kind,
+            file_bytes=file_bytes,
+            original_name=file.filename or "upload.jpg",
+            companion_index=companion_index,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not obj:
         raise HTTPException(status_code=404, detail="Token inválido o expirado")
 

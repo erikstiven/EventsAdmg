@@ -10,6 +10,7 @@ from io import BytesIO
 from typing import Any, Dict, Optional
 
 import qrcode
+from fastapi import HTTPException
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,6 +76,10 @@ class InvitationGroupsService:
         obj.status_id = invitation_group_status_id_from_label(canonical, default="Pendiente completar")
         # Legacy text column kept for backward compatibility.
         obj.status = canonical
+
+    @staticmethod
+    def _is_public_editable_status(status_label: str) -> bool:
+        return status_label in {"Pendiente completar", "En registro", "Pendiente de actualización"}
 
     @staticmethod
     def _build_link(token_plain: str, base_url: Optional[str] = None) -> str:
@@ -197,29 +202,45 @@ class InvitationGroupsService:
             current_status, default="Pendiente completar"
         )
 
-        event_changed = target_event_id != obj.event_id
-        group_size_changed = target_group_size != obj.group_size
+        old_values = {
+            "event_id": obj.event_id,
+            "titular_name": obj.titular_name,
+            "titular_identification": obj.titular_identification,
+            "fingerprint_code": obj.fingerprint_code,
+            "email": obj.email,
+            "phone": obj.phone,
+            "group_size": obj.group_size,
+            "send_email": obj.send_email,
+            "send_email_cc": obj.send_email_cc,
+            "intransferible": obj.intransferible,
+        }
+        new_values = {
+            "event_id": target_event_id,
+            "titular_name": data.get("titular_name", obj.titular_name),
+            "titular_identification": data.get("titular_identification", obj.titular_identification),
+            "fingerprint_code": data.get("fingerprint_code", obj.fingerprint_code),
+            "email": data.get("email", obj.email),
+            "phone": data.get("phone", obj.phone),
+            "group_size": target_group_size,
+            "send_email": bool(data.get("send_email", obj.send_email)),
+            "send_email_cc": bool(data.get("send_email_cc", obj.send_email_cc)),
+            "intransferible": bool(data.get("intransferible", obj.intransferible)),
+        }
+
+        event_changed = new_values["event_id"] != old_values["event_id"]
+        group_size_changed = new_values["group_size"] != old_values["group_size"]
         titular_identity_changed = (old_titular_id != new_titular_id) or (old_titular_name != new_titular_name)
         flags_changed = any(
-            k in data for k in ("send_email", "send_email_cc", "intransferible")
+            new_values[k] != old_values[k] for k in ("send_email", "send_email_cc", "intransferible")
         )
 
-        changed_fields: list[str] = []
-        for field in (
-            "event_id",
-            "titular_name",
-            "titular_identification",
-            "fingerprint_code",
-            "email",
-            "phone",
-            "group_size",
-            "send_email",
-            "send_email_cc",
-            "intransferible",
-            "companions",
-        ):
-            if field in data:
-                changed_fields.append(field)
+        changed_fields: list[str] = [
+            field for field in old_values.keys() if new_values[field] != old_values[field]
+        ]
+        field_changes: dict[str, dict[str, Any]] = {
+            field: {"from": old_values[field], "to": new_values[field]}
+            for field in changed_fields
+        }
 
         obj.titular_name = data.get("titular_name", obj.titular_name)
         obj.titular_identification = data.get("titular_identification", obj.titular_identification)
@@ -234,28 +255,74 @@ class InvitationGroupsService:
         obj.updated_at = datetime.now(timezone.utc)
 
         companion_identity_changed = False
-        for idx, comp in enumerate(companions or []):
+        identity_replacements: list[dict[str, Any]] = []
+        tokens_to_invalidate: set[str] = set()
+        if len(companions or []) != len(existing_companions):
+            companion_identity_changed = True
+
+        max_companions = max(len(existing_companions), len(companions or []))
+        for idx in range(max_companions):
+            comp = companions[idx] if idx < len(companions or []) else {}
             old = existing_companions[idx] if idx < len(existing_companions) else {}
             if not isinstance(old, dict):
                 old = {}
+            if not isinstance(comp, dict):
+                comp = {}
             old_name = str(old.get("name") or "").strip().lower()
             old_id = str(old.get("cedula") or "").strip().lower()
             new_name = str(comp.get("name") or "").strip().lower()
             new_id = str(comp.get("cedula") or "").strip().lower()
             if old_name != new_name or old_id != new_id:
                 companion_identity_changed = True
-                comp["selfie_url"] = None
-                comp["doc_url"] = None
-                comp["approved"] = None
-                comp["rejection_reason"] = None
-                comp["qr_token"] = None
-                comp["qr_sent_at"] = None
+                old_qr_token = str(old.get("qr_token") or "").strip()
+                if old_qr_token:
+                    tokens_to_invalidate.add(old_qr_token)
+                if idx < len(companions or []):
+                    comp["selfie_url"] = None
+                    comp["doc_url"] = None
+                    comp["approved"] = None
+                    comp["rejection_reason"] = None
+                    comp["qr_token"] = None
+                    comp["qr_sent_at"] = None
+                    companions[idx] = comp
+
+                identity_replacements.append(
+                    {
+                        "role": "acompanante",
+                        "index": idx + 1,
+                        "from_name": old.get("name"),
+                        "from_cedula": old.get("cedula"),
+                        "to_name": comp.get("name"),
+                        "to_cedula": comp.get("cedula"),
+                    }
+                )
+
+        companions_changed = bool(companion_identity_changed)
+        if companions_changed and "companions" not in changed_fields:
+            changed_fields.append("companions")
+            field_changes["companions"] = {
+                "from": len(existing_companions),
+                "to": len(companions or []),
+            }
 
         sensitive_change = bool(
             event_changed or group_size_changed or titular_identity_changed or companion_identity_changed
         )
 
         if titular_identity_changed:
+            identity_replacements.append(
+                {
+                    "role": "titular",
+                    "index": None,
+                    "from_name": old_values["titular_name"],
+                    "from_cedula": old_values["titular_identification"],
+                    "to_name": new_values["titular_name"],
+                    "to_cedula": new_values["titular_identification"],
+                }
+            )
+            old_titular_qr_token = str(obj.titular_qr_token or "").strip()
+            if old_titular_qr_token:
+                tokens_to_invalidate.add(old_titular_qr_token)
             obj.titular_selfie_url = None
             obj.titular_doc_url = None
             obj.titular_approved = None
@@ -264,6 +331,9 @@ class InvitationGroupsService:
             obj.titular_qr_sent_at = None
 
         if sensitive_change:
+            old_titular_qr_token = str(obj.titular_qr_token or "").strip()
+            if old_titular_qr_token:
+                tokens_to_invalidate.add(old_titular_qr_token)
             obj.titular_approved = None
             obj.titular_rejection_reason = None
             obj.titular_qr_token = None
@@ -278,18 +348,33 @@ class InvitationGroupsService:
                 }
                 for comp in (companions or [])
             ]
+            for old_comp in existing_companions:
+                if not isinstance(old_comp, dict):
+                    continue
+                old_qr_token = str(old_comp.get("qr_token") or "").strip()
+                if old_qr_token:
+                    tokens_to_invalidate.add(old_qr_token)
+
+        for token_plain in sorted(tokens_to_invalidate):
+            await self._invalidate_individual_invitation_by_token(
+                token_plain,
+                changed_by=user_id,
+                reason="group_admin_edit_sensitive_change",
+            )
 
         await self._replace_companions(obj.id, companions or [])
 
-        regenerate_link = True
-        token_plain, token_hash = self._generate_token()
-        obj.token_plain = token_plain
-        obj.token = token_hash
-        obj.link = self._build_link(token_plain, base_url=frontend_base_url)
-        obj.email_sent_at = None
+        regenerate_link = False
+        if sensitive_change:
+            regenerate_link = True
+            token_plain, token_hash = self._generate_token()
+            obj.token_plain = token_plain
+            obj.token = token_hash
+            obj.link = self._build_link(token_plain, base_url=frontend_base_url)
+            obj.email_sent_at = None
 
-        # If it was waiting decision or had sensitive change, move to update pending.
-        if current_status == "Pendiente aprobación" or sensitive_change:
+        # Move to update pending only for sensitive edits.
+        if sensitive_change:
             self._set_status(obj, "Pendiente de actualización")
 
         await self._record_status_change(
@@ -300,9 +385,11 @@ class InvitationGroupsService:
             payload={
                 "action": "admin_edit",
                 "changed_fields": changed_fields,
+                "field_changes": field_changes,
                 "sensitive_change": sensitive_change,
                 "flags_changed": flags_changed,
-                "regenerated_link": True,
+                "regenerated_link": regenerate_link,
+                "identity_replacements": identity_replacements,
             },
         )
 
@@ -525,9 +612,14 @@ class InvitationGroupsService:
         obj = result.scalar_one_or_none()
         if not obj:
             return None
+        current_status = self._status_label(obj, default="Pendiente completar")
+        if current_status not in {"Pendiente aprobación", "Pendiente de actualización", "Aprobado parcial"}:
+            raise ValueError(
+                "La invitación no está en un estado válido para decidir. Usa 'Habilitar corrección' si ya fue procesada."
+            )
 
         previous_status_id = obj.status_id or invitation_group_status_id_from_label(
-            self._status_label(obj, default="Pendiente completar"),
+            current_status,
             default="Pendiente completar",
         )
         companions = await self._load_companions(obj)
@@ -677,6 +769,7 @@ class InvitationGroupsService:
         affected: list[dict] = []
 
         if affected_titular:
+            previous_titular_qr_token = obj.titular_qr_token
             affected.append(
                 {
                     "role": "titular",
@@ -685,16 +778,26 @@ class InvitationGroupsService:
                     "cedula": obj.titular_identification,
                     "previous_approved": obj.titular_approved,
                     "previous_rejection_reason": obj.titular_rejection_reason,
+                    "previous_qr_token": previous_titular_qr_token,
                 }
             )
             if invalidate_previous_approvals:
+                if previous_titular_qr_token:
+                    await self._invalidate_individual_invitation_by_token(
+                        previous_titular_qr_token,
+                        changed_by=updated_by,
+                        reason="group_request_update_titular",
+                    )
                 obj.titular_approved = None
                 obj.titular_rejection_reason = None
+                obj.titular_qr_token = None
+                obj.titular_qr_sent_at = None
 
         for idx in sorted(affected_companion_indexes):
             comp = companions[idx]
             if not isinstance(comp, dict):
                 continue
+            previous_comp_qr_token = comp.get("qr_token")
             affected.append(
                 {
                     "role": "acompanante",
@@ -703,11 +806,20 @@ class InvitationGroupsService:
                     "cedula": comp.get("cedula"),
                     "previous_approved": comp.get("approved"),
                     "previous_rejection_reason": comp.get("rejection_reason"),
+                    "previous_qr_token": previous_comp_qr_token,
                 }
             )
             if invalidate_previous_approvals:
+                if previous_comp_qr_token:
+                    await self._invalidate_individual_invitation_by_token(
+                        previous_comp_qr_token,
+                        changed_by=updated_by,
+                        reason="group_request_update_companion",
+                    )
                 comp["approved"] = None
                 comp.pop("rejection_reason", None)
+                comp["qr_token"] = None
+                comp["qr_sent_at"] = None
             companions[idx] = comp
 
         await self._replace_companions(obj.id, companions)
@@ -806,6 +918,11 @@ class InvitationGroupsService:
             if role == "titular":
                 if is_approved and not (obj.titular_selfie_url and obj.titular_doc_url):
                     raise ValueError("El titular aún no tiene documentos completos.")
+                existing = obj.titular_approved
+                if isinstance(existing, bool) and existing != is_approved:
+                    raise ValueError(
+                        "El titular ya fue decidido. Usa 'Habilitar corrección' para cambiar una decisión previa."
+                    )
                 obj.titular_approved = is_approved
                 obj.titular_rejection_reason = None if is_approved else reason
             elif role == "acompanante":
@@ -815,6 +932,11 @@ class InvitationGroupsService:
                 comp = companions[idx]
                 if is_approved and not (comp.get("selfie_url") and comp.get("doc_url")):
                     raise ValueError("El acompañante aún no tiene documentos completos.")
+                existing = comp.get("approved")
+                if isinstance(existing, bool) and existing != is_approved:
+                    raise ValueError(
+                        "El acompañante ya fue decidido. Usa 'Habilitar corrección' para cambiar una decisión previa."
+                    )
                 comp["approved"] = is_approved
                 if is_approved:
                     comp.pop("rejection_reason", None)
@@ -984,13 +1106,36 @@ class InvitationGroupsService:
             await self._replace_companions(obj.id, updated)
         return updated, changed
 
+    async def _invalidate_individual_invitation_by_token(
+        self,
+        token_plain: Optional[str],
+        *,
+        changed_by: str,
+        reason: str,
+    ) -> None:
+        if not token_plain:
+            return
+        invitations_service = InvitationsService(self.db)
+        invitation = await invitations_service.get_by_field("token_plain", token_plain)
+        if not invitation:
+            return
+        if invitation.status == "USADO":
+            return
+        if invitation.status == "APROBADO":
+            await invitations_service.revoke_invitation(
+                invitation.id,
+                changed_by=changed_by,
+                reason=reason,
+                endpoint="/api/v1/invitation-groups/request-update",
+            )
+
     @staticmethod
     def _resolve_invitation_status(approved: Optional[bool], rejection_reason: Optional[str]) -> str:
         if approved is True:
             return "APROBADO"
         if rejection_reason:
             return "RECHAZADO"
-        return "PENDIENTE"
+        return "PENDIENTE_APROBACION"
 
     async def _ensure_individual_invitations(
         self,
@@ -1040,16 +1185,37 @@ class InvitationGroupsService:
             if invitation:
                 if invitation.status == "USADO":
                     return
-                update_data: dict[str, Any] = {
-                    "event_id": obj.event_id,
-                    "attendee_id": attendee.id,
-                    "status": status,
-                    "biometric_photo": face_photo_url,
-                    "updated_at": now,
-                }
-                if status == "APROBADO" and not invitation.approved_at:
-                    update_data["approved_at"] = now
-                await invitations_service.update(invitation.id, update_data)
+                if invitation.status == "APROBADO" and status in {"RECHAZADO", "PENDIENTE_APROBACION"}:
+                    await invitations_service.revoke_invitation(
+                        invitation.id,
+                        changed_by=obj.created_by,
+                        reason="group_sync_invalidate_approved",
+                        endpoint="/api/v1/invitation-groups/approve",
+                    )
+                    return
+                await invitations_service.update(
+                    invitation.id,
+                    {
+                        "biometric_photo": face_photo_url,
+                    },
+                )
+                if invitation.status != status:
+                    try:
+                        await invitations_service.advance_to_status(
+                            invitation.id,
+                            target_status=status,
+                            changed_by=obj.created_by,
+                            reason="group_sync_existing_invitation",
+                            endpoint="/api/v1/invitation-groups/approve",
+                            rejection_reason=rejection_reason,
+                        )
+                    except HTTPException as exc:
+                        logger.warning(
+                            "Could not sync invitation %s to %s from group flow: %s",
+                            invitation.id,
+                            status,
+                            exc.detail,
+                        )
                 return
 
             token_hash = hashlib.sha256(token_plain.encode("utf-8")).hexdigest()
@@ -1058,14 +1224,35 @@ class InvitationGroupsService:
                 "attendee_id": attendee.id,
                 "token": token_hash,
                 "token_plain": token_plain,
-                "status": status,
+                "status": "GENERADO",
                 "biometric_photo": face_photo_url,
                 "created_at": now,
                 "updated_at": now,
             }
-            if status == "APROBADO":
-                data["approved_at"] = now
-            await invitations_service.create(data, obj.created_by)
+            created = await invitations_service.create(
+                data,
+                obj.created_by,
+                changed_by=obj.created_by,
+                reason="group_sync_create_invitation",
+                endpoint="/api/v1/invitation-groups/approve",
+            )
+            if created and status != "GENERADO":
+                try:
+                    await invitations_service.advance_to_status(
+                        created.id,
+                        target_status=status,
+                        changed_by=obj.created_by,
+                        reason="group_sync_target_status",
+                        endpoint="/api/v1/invitation-groups/approve",
+                        rejection_reason=rejection_reason,
+                    )
+                except HTTPException as exc:
+                    logger.warning(
+                        "Could not advance invitation %s to %s from group flow: %s",
+                        created.id,
+                        status,
+                        exc.detail,
+                    )
 
         await ensure_person(
             token_plain=obj.titular_qr_token,
@@ -1320,6 +1507,11 @@ class InvitationGroupsService:
         obj = await self.get_by_token(token_plain)
         if not obj:
             return None
+        current_status = self._status_label(obj, default="Pendiente completar")
+        if not self._is_public_editable_status(current_status):
+            raise ValueError(
+                "El registro ya no esta habilitado para edicion. Solicita al aprobador habilitar correccion."
+            )
 
         safe_name = original_name.replace(" ", "_")
         filename = f"{token_plain}_{role}_{kind}_{safe_name}"
@@ -1419,8 +1611,14 @@ class InvitationGroupsService:
         if not obj:
             return None
 
+        current_status = self._status_label(obj, default="Pendiente completar")
+        if not self._is_public_editable_status(current_status):
+            raise ValueError(
+                "El registro ya no esta habilitado para edicion. Solicita al aprobador habilitar correccion."
+            )
+
         previous_status_id = obj.status_id or invitation_group_status_id_from_label(
-            self._status_label(obj, default="Pendiente completar"),
+            current_status,
             default="Pendiente completar",
         )
         companions = payload.get("companions") or []

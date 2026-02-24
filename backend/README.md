@@ -1,137 +1,69 @@
-# FastAPI Modular Template
+# Backend - EventAccess
 
-A best-practice FastAPI framework template designed for rapid module development and integration.
+API del sistema EventAccess construida con FastAPI + SQLAlchemy async.
 
-## 🚀 Features
+## Requisitos
 
-- **Modular Architecture**: Clean separation of concerns with routers, models, and services
-- **Injection Points**: Easy module integration with marked injection points
-- **Configuration Management**: Environment-based configuration with Pydantic Settings
-- **Development Ready**: Pre-configured with CORS, testing, and development tools
+- Python 3.10+
+- Dependencias de `requirements.txt`
 
-## 📁 Project Structure
-
-```
-backend/
-├── main.py                # FastAPI app with MODULE_ injection points
-├── requirements.txt       # Python dependencies
-├── .env.example           # Environment variables template
-├── core/
-│   ├── __init__.py
-│   └── config.py          # Pydantic settings with MODULE_CONFIG injection
-├── routers/               # API route handlers
-│   ├── __init__.py
-├── models/                # Database and Pydantic data models
-│   ├── __init__.py
-├── services/              # Business logic services
-│   ├── __init__.py
-├── dependencies/          # Dependency injection modules
-│   ├── __init__.py
-├── middlewares/           # Custom middleware components
-│   ├── __init__.py
-├── schemas/               # Pydantic request/response models
-│   ├── __init__.py
-├── tests/                 # Test files
-│   ├── __init__.py
-│   ├── conftest.py        # Pytest configuration
-│   └── test_main.py       # Main app tests
-└── utils/                 # Utility functions
-    ├── __init__.py
-```
-
-## 🛠 Quick Start
-
-1. **Install Dependencies**
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Configure Environment**
-
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
-
-3. **Run the Server**
-
-   ```bash
-   python main.py
-   ```
-
-4. **Test the API**
-   ```bash
-   curl http://localhost:8000/health
-   ```
-
-## 🔌 Module Injection Points
-
-This template includes predefined injection points for easy module integration. All injection points use the `MODULE_` prefix for easy identification:
-
-### main.py
-
-```python
-# MODULE_IMPORTS_START
-# Module imports will be injected here
-# MODULE_IMPORTS_END
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # MODULE_STARTUP_START
-    # Module startup code will be injected here
-    # MODULE_STARTUP_END
-    yield
-    # MODULE_SHUTDOWN_START
-    # Module shutdown code will be injected here
-    # MODULE_SHUTDOWN_END
-
-# MODULE_MIDDLEWARE_START
-# Module middleware will be injected here
-# MODULE_MIDDLEWARE_END
-
-# MODULE_ROUTERS_START
-# Module routers will be injected here
-# MODULE_ROUTERS_END
-```
-
-### core/config.py
-
-```python
-class Settings(BaseSettings):
-    # ... existing settings ...
-
-    # MODULE_CONFIG_START
-    # Module configuration will be injected here
-    # MODULE_CONFIG_END
-```
-
-## 📦 Module Integration
-
-To integrate modules with this template:
-
-1. **Use the module manager**:
-
-   ```bash
-   python manager.py install base <module-name>
-   ```
-
-2. **Manual integration** (modules automatically handle these):
-   - Add imports to `MODULE_IMPORTS` section
-   - Add startup/shutdown logic to respective sections
-   - Add configuration to `MODULE_CONFIG` section
-   - Add routers and middleware to respective sections
-
-## 🧪 Testing
-
-Run tests with pytest:
+## Instalacion
 
 ```bash
-pytest tests/ -v
+cd backend
+pip install -r requirements.txt
 ```
 
-The template includes:
+## Variables de entorno principales
 
-- Basic API endpoint tests
-- Application lifecycle tests
-- Test client configuration in `conftest.py`
+Basadas en `backend/core/config.py`:
+
+- `DATABASE_URL` (default: `sqlite+aiosqlite:///./eventaccess.db`)
+- `ENVIRONMENT` (default: `development`)
+- `HOST` (default: `0.0.0.0`)
+- `PORT` (default en config: `8001`)
+- `JWT_SECRET_KEY`
+- `JWT_ALGORITHM` (default: `HS256`)
+- `JWT_EXPIRE_MINUTES` (default: 7 dias)
+- `PYTHON_BACKEND_URL` (para construir URL publica de backend)
+
+## Ejecucion local recomendada
+
+Para mantener compatibilidad con el proxy de Vite del frontend:
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Swagger:
+
+- `http://localhost:8000/docs`
+
+## Arranque alternativo
+
+```bash
+python main.py
+```
+
+Nota: este modo usa `PORT` de entorno o el default interno (`8001`), por lo que puede no coincidir con el proxy del frontend si no se ajusta.
+
+## Routers relevantes
+
+- Auth simple: `routers/auth_simple.py`
+- Invitaciones custom: `routers/invitations_custom.py`
+- Check-in: `routers/checkin_custom.py`
+- Invitaciones grupales: `routers/invitation_groups.py`
+- RBAC/permisos: `routers/rbac.py`
+- Config publica: `routers/config_public.py`
+
+## Endpoints de referencia
+
+- `POST /api/v1/auth-simple/login`
+- `GET /api/v1/auth-simple/me`
+- `POST /api/v1/invitations/generate`
+- `POST /api/v1/invitations/activate`
+- `POST /api/v1/checkin/validate-qr`
+- `POST /api/v1/checkin/validate-biometric`
+- `POST /api/v1/checkin/manual-validate`
+
+Ultima actualizacion: 2026-02-23

@@ -65,9 +65,30 @@ async def attendees_operational(
     _perm: UserResponse = Depends(require_any_permission("attendees.read", "invitations.read", "approvals.read")),
     db: AsyncSession = Depends(get_db),
 ):
+    latest_invitation_sub = (
+        select(
+            Invitations.id.label("invitation_id"),
+            Invitations.attendee_id.label("attendee_id"),
+            Invitations.event_id.label("event_id"),
+            Invitations.status.label("status"),
+            Invitations.created_at.label("created_at"),
+            func.row_number()
+            .over(
+                partition_by=(Invitations.attendee_id, Invitations.event_id),
+                order_by=(
+                    func.coalesce(Invitations.updated_at, Invitations.created_at).desc(),
+                    Invitations.id.desc(),
+                ),
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+
     status_expr = case(
-        (func.upper(Invitations.status) == "RECHAZADO", "rejected"),
-        (func.upper(Invitations.status).in_(["APROBADO", "USADO"]), "approved"),
+        (func.upper(latest_invitation_sub.c.status) == "RECHAZADO", "rejected"),
+        (func.upper(latest_invitation_sub.c.status) == "REVOCADO", "rejected"),
+        (func.upper(latest_invitation_sub.c.status).in_(["APROBADO", "USADO"]), "approved"),
         else_="pending",
     ).label("invitation_status")
 
@@ -92,7 +113,7 @@ async def attendees_operational(
                 select(1).where(
                     and_(
                         Checkins.attendee_id == Attendees.id,
-                        Checkins.event_id == Invitations.event_id,
+                        Checkins.event_id == latest_invitation_sub.c.event_id,
                     )
                 )
             ),
@@ -103,23 +124,25 @@ async def attendees_operational(
 
     base = (
         select(
-            Invitations.id.label("invitation_id"),
+            latest_invitation_sub.c.invitation_id.label("invitation_id"),
             Attendees.id.label("attendee_id"),
             Attendees.full_name,
             Attendees.identification,
-            Invitations.event_id,
+            latest_invitation_sub.c.event_id.label("event_id"),
             Events.name.label("event_name"),
             status_expr,
             biometric_expr,
             checkin_expr,
-            Invitations.created_at,
+            latest_invitation_sub.c.created_at.label("created_at"),
         )
-        .join(Attendees, Attendees.id == Invitations.attendee_id)
-        .join(Events, Events.id == Invitations.event_id)
+        .select_from(latest_invitation_sub)
+        .join(Attendees, Attendees.id == latest_invitation_sub.c.attendee_id)
+        .join(Events, Events.id == latest_invitation_sub.c.event_id)
+        .where(latest_invitation_sub.c.rn == 1)
     )
 
     if eventId:
-        base = base.where(Invitations.event_id == eventId)
+        base = base.where(latest_invitation_sub.c.event_id == eventId)
 
     if status in {"pending", "approved", "rejected"}:
         base = base.where(status_expr == status)
@@ -140,9 +163,9 @@ async def attendees_operational(
         )
 
     if dateFrom:
-        base = base.where(Invitations.created_at >= dateFrom)
+        base = base.where(latest_invitation_sub.c.created_at >= dateFrom)
     if dateTo:
-        base = base.where(Invitations.created_at <= dateTo)
+        base = base.where(latest_invitation_sub.c.created_at <= dateTo)
 
     base_sub = base.subquery()
 
@@ -167,7 +190,7 @@ async def attendees_operational(
     total = int(metrics_row.get("total") or 0)
 
     page_offset = (page - 1) * pageSize
-    data_query = base.order_by(Invitations.created_at.desc()).offset(page_offset).limit(pageSize)
+    data_query = base.order_by(latest_invitation_sub.c.created_at.desc()).offset(page_offset).limit(pageSize)
     rows = (await db.execute(data_query)).mappings().all()
 
     items = [

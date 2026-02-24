@@ -1,6 +1,8 @@
 import logging
 import os
 import smtplib
+import re
+import html
 from email.message import EmailMessage
 from email.utils import make_msgid
 from typing import Iterable
@@ -25,14 +27,19 @@ class EmailService:
         content = template
         for key, value in values.items():
             content = content.replace(f"{{{{{key}}}}}", value or "")
-        return content.replace("\\n", "\n")
+        content = content.replace("\\n", "\n")
+        # Recover HTML when editor/config stores escaped tags.
+        if "&lt;" in content or "&#60;" in content:
+            content = html.unescape(content)
+        return content
 
     @staticmethod
     def _looks_like_html(content: str) -> bool:
         if not content:
             return False
-        sample = content.lower()
-        return "<html" in sample or "<body" in sample or "<div" in sample or "<p" in sample or "<br" in sample
+        sample = content.strip()
+        # Generic HTML detection: any tag like <tag ...>...</tag> or self-closing tags.
+        return bool(re.search(r"<\s*[a-zA-Z][^>]*>", sample))
 
     @classmethod
     def send_invitation_email(
