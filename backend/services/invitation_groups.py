@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 from io import BytesIO
@@ -48,7 +49,7 @@ class InvitationGroupsService:
         "<p>Tu registro fue aprobado. Presenta este QR en el ingreso.</p>"
         "<p><strong>Evento:</strong> {{evento}}</p>"
         "<p><strong>Link:</strong> {{link}}</p>"
-        "<p><img src=\"{{qr_image}}\" alt=\"QR de acceso\" style=\"max-width:240px;\" /></p>"
+        "<p>{{qr_image}}</p>"
         "<p>Gracias,<br/>EventAccess</p>"
     )
     DEFAULT_UPDATE_EMAIL_TEMPLATE = (
@@ -483,6 +484,34 @@ class InvitationGroupsService:
         img.save(buffer, format="PNG")
         return buffer.getvalue()
 
+    @staticmethod
+    def _build_qr_template_values(
+        template: str,
+        *,
+        nombre: str,
+        link: str,
+        evento: str,
+        fecha: str,
+        qr_cid: str,
+    ) -> dict[str, str]:
+        qr_src = f"cid:{qr_cid}"
+        uses_src_placeholder = bool(
+            re.search(r"""src\s*=\s*["']\s*{{\s*qr_image\s*}}\s*["']""", template or "", flags=re.IGNORECASE)
+        )
+        qr_image_value = (
+            qr_src
+            if uses_src_placeholder
+            else f'<img src="{qr_src}" alt="QR de acceso" style="max-width:240px;height:auto;display:block;border:0;" />'
+        )
+        return {
+            "nombre": nombre or "",
+            "link": link or "",
+            "evento": evento or "",
+            "fecha": fecha or "",
+            "qr_image": qr_image_value,
+            "qr_image_src": qr_src,
+        }
+
     async def _send_qr_email(self, obj: Invitation_groups, companions: list[dict]) -> bool:
         if not obj.email:
             return False
@@ -512,13 +541,14 @@ class InvitationGroupsService:
         titular_qr_value = obj.titular_qr_token or obj.token_plain or ""
         qr_bytes = self._build_qr_png(titular_qr_value)
         qr_cid = f"qr-{secrets.token_hex(8)}"
-        values = {
-            "nombre": obj.titular_name or "",
-            "link": link,
-            "evento": event_name,
-            "fecha": event_date,
-            "qr_image": f"cid:{qr_cid}",
-        }
+        values = self._build_qr_template_values(
+            template,
+            nombre=obj.titular_name or "",
+            link=link,
+            evento=event_name,
+            fecha=event_date,
+            qr_cid=qr_cid,
+        )
         inline_attachments = [
             {
                 "content": qr_bytes,
@@ -552,13 +582,14 @@ class InvitationGroupsService:
                 comp_qr_value = comp.get("qr_token") or obj.token_plain or ""
                 comp_qr_bytes = self._build_qr_png(comp_qr_value)
                 comp_qr_cid = f"qr-{secrets.token_hex(8)}"
-                comp_values = {
-                    "nombre": comp.get("name", "") or values.get("nombre", ""),
-                    "link": link,
-                    "evento": event_name,
-                    "fecha": event_date,
-                    "qr_image": f"cid:{comp_qr_cid}",
-                }
+                comp_values = self._build_qr_template_values(
+                    template,
+                    nombre=comp.get("name", "") or values.get("nombre", ""),
+                    link=link,
+                    evento=event_name,
+                    fecha=event_date,
+                    qr_cid=comp_qr_cid,
+                )
                 comp_inline_attachments = [
                     {
                         "content": comp_qr_bytes,
@@ -1016,13 +1047,14 @@ class InvitationGroupsService:
                         "filename": "qr.png",
                     }
                 ]
-                values = {
-                    "nombre": obj.titular_name or "",
-                    "link": link,
-                    "evento": event_name,
-                    "fecha": event_date,
-                    "qr_image": f"cid:{qr_cid}",
-                }
+                values = self._build_qr_template_values(
+                    template,
+                    nombre=obj.titular_name or "",
+                    link=link,
+                    evento=event_name,
+                    fecha=event_date,
+                    qr_cid=qr_cid,
+                )
                 await run_in_threadpool(
                     EmailService.send_invitation_email,
                     obj.email,
@@ -1055,13 +1087,14 @@ class InvitationGroupsService:
                         "filename": "qr.png",
                     }
                 ]
-                values = {
-                    "nombre": comp.get("name", "") or obj.titular_name or "",
-                    "link": link,
-                    "evento": event_name,
-                    "fecha": event_date,
-                    "qr_image": f"cid:{comp_qr_cid}",
-                }
+                values = self._build_qr_template_values(
+                    template,
+                    nombre=comp.get("name", "") or obj.titular_name or "",
+                    link=link,
+                    evento=event_name,
+                    fecha=event_date,
+                    qr_cid=comp_qr_cid,
+                )
                 await run_in_threadpool(
                     EmailService.send_invitation_email,
                     comp_email,

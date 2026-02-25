@@ -177,7 +177,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               invitation_id: id,
               group_label: groupLabel(id),
               title: `${groupLabel(id)} · Nueva solicitud`,
-              message: `${item.event_name || `Evento ${item.event_id}`} · ${summary.completeDocs}/${summary.total} con documentos.`,
+              message: `${item.event_name || `Evento ${item.event_id}`} · ${summary.completeDocs} de ${summary.total} integrantes con registro completo.`,
               created_at: String(item.updated_at || item.created_at || new Date().toISOString()),
               read: false,
               type: "new",
@@ -222,7 +222,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             invitation_id: id,
             group_label: groupLabel(id),
             title: `${groupLabel(id)} · Nueva solicitud`,
-            message: `${item.event_name || `Evento ${item.event_id}`} · ${summary.completeDocs}/${summary.total} con documentos.`,
+            message: `${item.event_name || `Evento ${item.event_id}`} · ${summary.completeDocs} de ${summary.total} integrantes con registro completo.`,
             created_at: String(item.updated_at || item.created_at || new Date().toISOString()),
             read: false,
             type: "new",
@@ -479,8 +479,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
                         filteredNotifications.map((notif) => (
                           <button
                             key={notif.id}
-                            className={`w-full text-left px-3 py-2 border-b last:border-b-0 hover:bg-slate-50 ${
-                              notif.read ? "bg-white" : "bg-blue-50/50"
+                            className={`w-full text-left px-3 py-2 border-b border-l-4 last:border-b-0 transition-colors ${
+                              notif.read
+                                ? "bg-white border-l-transparent hover:bg-slate-50"
+                                : "bg-blue-100 border-l-blue-600 hover:bg-blue-200/70"
                             }`}
                             onClick={() => openNotification(notif)}
                           >
@@ -492,7 +494,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
                                   <div className="flex items-center justify-between gap-2">
                                     <div className="flex items-center gap-2 min-w-0">
                                       <Icon className="h-4 w-4 text-slate-500 shrink-0" />
-                                      <div className="text-sm font-medium truncate">
+                                      <div
+                                        className={`text-sm truncate ${
+                                          notif.read
+                                            ? "font-medium text-slate-700"
+                                            : "font-semibold text-slate-900"
+                                        }`}
+                                      >
                                         {notif.title}
                                       </div>
                                     </div>
@@ -515,10 +523,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
                                       </button>
                                     </div>
                                   </div>
-                                  <div className="text-xs text-gray-600 mt-0.5">
+                                  <div
+                                    className={`text-xs mt-0.5 ${
+                                      notif.read
+                                        ? "text-gray-600"
+                                        : "text-slate-700"
+                                    }`}
+                                  >
                                     {notif.message}
                                   </div>
-                                  <div className="text-[11px] text-gray-400 mt-1">
+                                  <div className="text-[11px] text-gray-400 mt-1 inline-flex items-center gap-1.5">
+                                    {!notif.read && (
+                                      <span className="inline-block h-2 w-2 rounded-full bg-blue-600" />
+                                    )}
                                     {formatDateTime(notif.created_at)}
                                   </div>
                                 </>

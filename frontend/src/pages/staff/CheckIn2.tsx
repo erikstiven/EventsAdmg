@@ -246,6 +246,12 @@ export default function CheckIn2() {
     return fallback;
   };
 
+  const formatSimilarityPercent = (value: number) => {
+    const normalized = Number.isFinite(value) ? value : 0;
+    const bounded = Math.max(0, Math.min(1, normalized));
+    return `${Math.round(bounded * 100)}%`;
+  };
+
   const openVerification = () => {
     setFaceResult('pendiente');
     setIdVerified(true);
@@ -375,15 +381,16 @@ export default function CheckIn2() {
 
   const handleBiometricValidated = (result: { aprobado: boolean; similitud: number }) => {
     setFaceResult(result.aprobado ? 'aprobado' : 'rechazado');
+    const similarityLabel = formatSimilarityPercent(result.similitud);
     if (result.aprobado) {
       toast({
         title: 'Biometría aprobada',
-        description: `Similitud ${result.similitud.toFixed(2)}. Verifica cédula física y aprueba el ingreso.`,
+        description: `Similitud ${similarityLabel}. Verifica cédula física y aprueba el ingreso.`,
       });
     } else {
       toast({
         title: 'Biometría rechazada',
-        description: `Similitud ${result.similitud.toFixed(2)}. Usa aprobación manual.`,
+        description: `Similitud ${similarityLabel}. Usa aprobación manual.`,
       });
     }
     setFaceScanOpen(false);

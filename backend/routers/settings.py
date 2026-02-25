@@ -1,10 +1,14 @@
+import os
+import re
+import hashlib
 from pathlib import Path
 from typing import Dict
 
 from dependencies.auth import get_admin_user
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from schemas.auth import UserResponse
+from services.email_service import EmailService
 
 router = APIRouter(prefix="/api/v1/admin/settings", tags=["admin-settings"])
 
@@ -22,6 +26,20 @@ class EnvConfig(BaseModel):
 
 class EnvVariableUpdate(BaseModel):
     value: str
+
+
+class EmailPreviewRequest(BaseModel):
+    template: str
+    values: Dict[str, str] = Field(default_factory=dict)
+
+
+class EmailPreviewResponse(BaseModel):
+    original_template: str
+    rendered_html: str
+    smtp_html: str
+    unresolved_variables: list[str]
+    lengths: Dict[str, int]
+    digests: Dict[str, str]
 
 
 def validate_backend_setting(key: str, value: str) -> str:
@@ -72,8 +90,9 @@ def read_env_file(env_type: str) -> Dict[str, str]:
     env_vars = {}
     with open(env_file, "r", encoding="utf-8") as f:
         for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
+            line = line.rstrip("\r\n")
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in line:
                 key, value = line.split("=", 1)
                 raw_value = value.strip()
                 if (
@@ -85,6 +104,7 @@ def read_env_file(env_type: str) -> Dict[str, str]:
                     raw_value.replace('\\"', '"')
                     .replace("\\'", "'")
                     .replace("\\n", "\n")
+                    .replace("\\\\", "\\")
                 )
                 env_vars[key.strip()] = normalized_value
     return env_vars
@@ -108,6 +128,14 @@ def write_env_file(env_type: str, env_vars: Dict[str, str]):
             )
             # Always quote to avoid dotenv truncation on '#', ';', spaces, etc.
             f.write(f'{key}="{safe_value}"\n')
+
+
+def apply_backend_runtime_setting(key: str, value: str) -> None:
+    os.environ[str(key)] = str(value)
+
+
+def remove_backend_runtime_setting(key: str) -> None:
+    os.environ.pop(str(key), None)
 
 
 @router.get("", response_model=EnvConfig)
@@ -166,6 +194,44 @@ async def get_settings(current_user: UserResponse = Depends(get_admin_user)):
         raise HTTPException(status_code=500, detail=f"Failed to read configuration: {str(e)}")
 
 
+@router.post("/email-preview", response_model=EmailPreviewResponse)
+async def render_email_preview(
+    payload: EmailPreviewRequest,
+    current_user: UserResponse = Depends(get_admin_user),
+):
+    """Render email template preview using the same interpolation as live SMTP sends."""
+    try:
+        template = payload.template or ""
+        values = payload.values or {}
+        rendered = EmailService.render_template_variables(template, values)
+        unresolved = sorted(
+            set(
+                match.group(1).strip()
+                for match in re.finditer(r"{{\s*([a-zA-Z0-9_]+)\s*}}", rendered)
+            )
+        )
+        lengths = {
+            "original_template": len(template),
+            "rendered_html": len(rendered),
+            "smtp_html": len(rendered),
+        }
+        digests = {
+            "original_template_sha256": hashlib.sha256(template.encode("utf-8")).hexdigest(),
+            "rendered_html_sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
+            "smtp_html_sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
+        }
+        return EmailPreviewResponse(
+            original_template=template,
+            rendered_html=rendered,
+            smtp_html=rendered,
+            unresolved_variables=unresolved,
+            lengths=lengths,
+            digests=digests,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to render email preview: {str(e)}")
+
+
 @router.put("/backend/{key}")
 async def update_backend_setting(
     key: str, update: EnvVariableUpdate, current_user: UserResponse = Depends(get_admin_user)
@@ -173,9 +239,11 @@ async def update_backend_setting(
     """Update a backend environment variable."""
     try:
         env_vars = read_env_file("backend")
-        env_vars[key] = validate_backend_setting(key, update.value)
+        normalized_value = validate_backend_setting(key, update.value)
+        env_vars[key] = normalized_value
         write_env_file("backend", env_vars)
-        return {"message": f"Backend configuration '{key}' updated successfully; restart required to take effect."}
+        apply_backend_runtime_setting(key, normalized_value)
+        return {"message": f"Backend configuration '{key}' updated successfully."}
     except HTTPException:
         raise
     except Exception as e:
@@ -203,9 +271,11 @@ async def add_backend_setting(
     """Add a backend environment variable."""
     try:
         env_vars = read_env_file("backend")
-        env_vars[key] = validate_backend_setting(key, update.value)
+        normalized_value = validate_backend_setting(key, update.value)
+        env_vars[key] = normalized_value
         write_env_file("backend", env_vars)
-        return {"message": f"Backend configuration '{key}' added successfully; restart required to take effect."}
+        apply_backend_runtime_setting(key, normalized_value)
+        return {"message": f"Backend configuration '{key}' added successfully."}
     except HTTPException:
         raise
     except Exception as e:
@@ -234,7 +304,8 @@ async def delete_backend_setting(key: str, current_user: UserResponse = Depends(
         if key in env_vars:
             del env_vars[key]
             write_env_file("backend", env_vars)
-            return {"message": f"Backend configuration '{key}' deleted successfully; restart required to take effect."}
+            remove_backend_runtime_setting(key)
+            return {"message": f"Backend configuration '{key}' deleted successfully."}
         else:
             raise HTTPException(status_code=404, detail=f"Configuration item '{key}' does not exist")
     except Exception as e:

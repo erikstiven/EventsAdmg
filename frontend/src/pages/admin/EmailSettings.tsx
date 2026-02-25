@@ -3,6 +3,7 @@ import { Layout } from '@/components/Layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
@@ -17,8 +18,12 @@ export default function EmailSettings() {
   const { toast } = useToast();
   const quillRef = useRef<ReactQuill | null>(null);
   const qrQuillRef = useRef<ReactQuill | null>(null);
+  const invitationHtmlRef = useRef<HTMLTextAreaElement | null>(null);
+  const qrHtmlRef = useRef<HTMLTextAreaElement | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [invitationEditorMode, setInvitationEditorMode] = useState<'visual' | 'html'>('visual');
+  const [qrEditorMode, setQrEditorMode] = useState<'visual' | 'html'>('visual');
   const [form, setForm] = useState({
     BIOMETRIC_MATCH_THRESHOLD: '0.60',
     BIOMETRIC_MODEL_NAME: 'buffalo_l',
@@ -34,62 +39,69 @@ export default function EmailSettings() {
     INVITATION_QR_EMAIL_TEMPLATE: '',
   });
 
-  const normalizeTemplate = (value: string) => {
-    if (!value) return value;
-    const hasHtml = /<[^>]+>/.test(value);
-    if (!hasHtml && value.includes('\\n')) {
-      return value.replace(/\\n/g, '<br>');
-    }
-    return value;
+  const normalizeTemplateHtml = (content: string) => {
+    const source = String(content || '').trim();
+    if (!source) return '';
+    if (!source.includes('&lt;') && !source.includes('&gt;') && !source.includes('&amp;')) return source;
+
+    const parser = new DOMParser();
+    const decoded = parser.parseFromString(source, 'text/html').documentElement.textContent || source;
+    return decoded
+      .replace(/<p>\s*(?:&nbsp;|\u00a0|\s)*((?:<\/?[a-zA-Z][^>]*>\s*)+)\s*<\/p>/gi, '$1')
+      .replace(/<p>\s*(?:<br\s*\/?>|&nbsp;|\u00a0|\s)*<\/p>/gi, '')
+      .trim();
   };
 
-  const decodeEscapedHtmlTemplate = (value: string) => {
-    if (!value) return value;
-    const hasEscapedTag = /&lt;\s*\/?\s*[a-z!/][^&]*&gt;/i.test(value);
-    if (!hasEscapedTag) return value;
-    try {
-      const temp = document.createElement('div');
-      temp.innerHTML = value;
-      const decoded = (temp.textContent || '').trim();
-      if (/<\s*\/?\s*[a-z][\s\S]*>/i.test(decoded)) {
-        return decoded;
-      }
-      return value;
-    } catch {
-      return value;
+  const insertAtCursor = (
+    ref: React.RefObject<HTMLTextAreaElement | null>,
+    currentValue: string,
+    variable: string,
+    update: (next: string) => void
+  ) => {
+    const input = ref.current;
+    if (!input) {
+      update(`${currentValue || ''}${variable}`);
+      return;
     }
+    const start = input.selectionStart ?? currentValue.length;
+    const end = input.selectionEnd ?? currentValue.length;
+    const next = `${currentValue.slice(0, start)}${variable}${currentValue.slice(end)}`;
+    update(next);
+    window.requestAnimationFrame(() => {
+      input.focus();
+      const pos = start + variable.length;
+      input.setSelectionRange(pos, pos);
+    });
   };
 
   const insertVariable = (variable: string) => {
-    const editor = quillRef.current?.getEditor();
-    if (editor) {
-      const range = editor.getSelection(true);
-      if (range) {
+    if (invitationEditorMode === 'visual') {
+      const editor = quillRef.current?.getEditor();
+      const range = editor?.getSelection(true);
+      if (editor && range) {
         editor.insertText(range.index, variable);
         editor.setSelection(range.index + variable.length, 0);
         return;
       }
     }
-    setForm((f) => ({
-      ...f,
-      INVITATION_EMAIL_TEMPLATE: `${f.INVITATION_EMAIL_TEMPLATE || ''}${variable}`,
-    }));
+    insertAtCursor(invitationHtmlRef, form.INVITATION_EMAIL_TEMPLATE, variable, (next) =>
+      setForm((f) => ({ ...f, INVITATION_EMAIL_TEMPLATE: next }))
+    );
   };
 
   const insertQrVariable = (variable: string) => {
-    const editor = qrQuillRef.current?.getEditor();
-    if (editor) {
-      const range = editor.getSelection(true);
-      if (range) {
+    if (qrEditorMode === 'visual') {
+      const editor = qrQuillRef.current?.getEditor();
+      const range = editor?.getSelection(true);
+      if (editor && range) {
         editor.insertText(range.index, variable);
         editor.setSelection(range.index + variable.length, 0);
         return;
       }
     }
-    setForm((f) => ({
-      ...f,
-      INVITATION_QR_EMAIL_TEMPLATE: `${f.INVITATION_QR_EMAIL_TEMPLATE || ''}${variable}`,
-    }));
+    insertAtCursor(qrHtmlRef, form.INVITATION_QR_EMAIL_TEMPLATE, variable, (next) =>
+      setForm((f) => ({ ...f, INVITATION_QR_EMAIL_TEMPLATE: next }))
+    );
   };
 
   useEffect(() => {
@@ -112,11 +124,11 @@ export default function EmailSettings() {
           INVITATION_EMAIL_SUBJECT:
             backendVars.INVITATION_EMAIL_SUBJECT?.value || prev.INVITATION_EMAIL_SUBJECT,
           INVITATION_EMAIL_TEMPLATE:
-            normalizeTemplate(backendVars.INVITATION_EMAIL_TEMPLATE?.value || prev.INVITATION_EMAIL_TEMPLATE),
+            normalizeTemplateHtml(backendVars.INVITATION_EMAIL_TEMPLATE?.value || prev.INVITATION_EMAIL_TEMPLATE),
           INVITATION_QR_EMAIL_SUBJECT:
             backendVars.INVITATION_QR_EMAIL_SUBJECT?.value || prev.INVITATION_QR_EMAIL_SUBJECT,
           INVITATION_QR_EMAIL_TEMPLATE:
-            normalizeTemplate(backendVars.INVITATION_QR_EMAIL_TEMPLATE?.value || prev.INVITATION_QR_EMAIL_TEMPLATE),
+            normalizeTemplateHtml(backendVars.INVITATION_QR_EMAIL_TEMPLATE?.value || prev.INVITATION_QR_EMAIL_TEMPLATE),
         }));
       } catch {
         toast({
@@ -155,9 +167,9 @@ export default function EmailSettings() {
         ['SMTP_FROM', form.SMTP_FROM],
         ['SMTP_USE_TLS', form.SMTP_USE_TLS ? 'true' : 'false'],
         ['INVITATION_EMAIL_SUBJECT', form.INVITATION_EMAIL_SUBJECT],
-        ['INVITATION_EMAIL_TEMPLATE', decodeEscapedHtmlTemplate(form.INVITATION_EMAIL_TEMPLATE)],
+        ['INVITATION_EMAIL_TEMPLATE', form.INVITATION_EMAIL_TEMPLATE],
         ['INVITATION_QR_EMAIL_SUBJECT', form.INVITATION_QR_EMAIL_SUBJECT],
-        ['INVITATION_QR_EMAIL_TEMPLATE', decodeEscapedHtmlTemplate(form.INVITATION_QR_EMAIL_TEMPLATE)],
+        ['INVITATION_QR_EMAIL_TEMPLATE', form.INVITATION_QR_EMAIL_TEMPLATE],
       ];
       await Promise.all(updates.map(([key, value]) => api.settings.updateBackend(key, value)));
       toast({
@@ -178,20 +190,6 @@ export default function EmailSettings() {
   return (
     <Layout>
       <div className="max-w-5xl mx-auto space-y-6 pb-28">
-        <style>
-          {`
-            .email-editor .ql-editor img {
-              max-width: 100%;
-              height: auto;
-            }
-            .email-preview img {
-              max-width: 100%;
-              height: auto;
-              display: block;
-            }
-          `}
-        </style>
-
         <div className="space-y-1">
           <h1 className="text-3xl font-bold">Configuración del sistema</h1>
           <p className="text-gray-600">Configura biometría y correo para el flujo de invitaciones.</p>
@@ -328,29 +326,54 @@ export default function EmailSettings() {
                   </div>
                   <div>
                     <Label>Contenido</Label>
-                    <div className="border rounded-md overflow-hidden bg-white">
-                      <ReactQuill
-                        ref={quillRef}
-                        theme="snow"
-                        value={form.INVITATION_EMAIL_TEMPLATE}
-                        onChange={(value) =>
-                          setForm((f) => ({ ...f, INVITATION_EMAIL_TEMPLATE: value }))
-                        }
-                        placeholder="Escribe aquí el contenido del correo..."
-                        readOnly={loading}
-                        className="email-editor"
-                        modules={{
-                          toolbar: [
-                            [{ header: [1, 2, 3, false] }],
-                            ['bold', 'italic', 'underline', 'strike'],
-                            [{ color: [] }, { background: [] }],
-                            [{ list: 'ordered' }, { list: 'bullet' }],
-                            ['link', 'image'],
-                            ['clean'],
-                          ],
-                        }}
-                      />
+                    <div className="mb-2 inline-flex rounded-md border bg-white p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setInvitationEditorMode('visual')}
+                        className={`px-2.5 py-1 text-xs rounded ${invitationEditorMode === 'visual' ? 'bg-slate-900 text-white' : 'text-slate-600'}`}
+                      >
+                        Texto
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInvitationEditorMode('html')}
+                        className={`px-2.5 py-1 text-xs rounded ${invitationEditorMode === 'html' ? 'bg-slate-900 text-white' : 'text-slate-600'}`}
+                      >
+                        Codigo
+                      </button>
                     </div>
+                    <div className="border rounded-md overflow-hidden bg-white">
+                      {invitationEditorMode === 'visual' ? (
+                        <ReactQuill
+                          ref={quillRef}
+                          theme="snow"
+                          value={form.INVITATION_EMAIL_TEMPLATE}
+                          onChange={(value) => setForm((f) => ({ ...f, INVITATION_EMAIL_TEMPLATE: value }))}
+                          placeholder="Escribe el contenido del correo..."
+                          readOnly={loading}
+                          modules={{
+                            toolbar: [
+                              [{ header: [1, 2, 3, false] }],
+                              ['bold', 'italic', 'underline', 'strike'],
+                              [{ color: [] }, { background: [] }],
+                              [{ list: 'ordered' }, { list: 'bullet' }],
+                              ['link', 'image'],
+                              ['clean'],
+                            ],
+                          }}
+                        />
+                      ) : (
+                        <Textarea
+                          ref={invitationHtmlRef}
+                          value={form.INVITATION_EMAIL_TEMPLATE}
+                          onChange={(e) => setForm((f) => ({ ...f, INVITATION_EMAIL_TEMPLATE: e.target.value }))}
+                          placeholder="Pega aqui HTML completo de email..."
+                          disabled={loading}
+                          className="min-h-[340px] font-mono text-xs leading-5 border-0 rounded-none"
+                        />
+                      )}
+                    </div>
+                    <p className="mt-2 text-xs text-gray-500">`Texto`: escribir normal. `Codigo`: pegar HTML.</p>
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
                       <span>Insertar variable:</span>
                       <Button type="button" size="sm" variant="outline" onClick={() => insertVariable('{{nombre}}')}>
@@ -365,22 +388,6 @@ export default function EmailSettings() {
                       <Button type="button" size="sm" variant="outline" onClick={() => insertVariable('{{fecha}}')}>
                         Fecha
                       </Button>
-                    </div>
-                  </div>
-                  <Separator />
-                  <div className="rounded-md border bg-white p-4">
-                    <div className="text-sm font-semibold mb-3">Vista previa</div>
-                    <div className="bg-slate-100 rounded-md p-4">
-                      <div className="mx-auto w-full max-w-[600px] bg-white border rounded-md shadow-sm p-6">
-                        <div
-                          className="email-preview prose max-w-none text-sm"
-                          dangerouslySetInnerHTML={{
-                            __html:
-                              decodeEscapedHtmlTemplate(form.INVITATION_EMAIL_TEMPLATE) ||
-                              '<em>Escribe el contenido para ver la vista previa.</em>',
-                          }}
-                        />
-                      </div>
                     </div>
                   </div>
                 </AccordionContent>
@@ -403,29 +410,54 @@ export default function EmailSettings() {
                   </div>
                   <div>
                     <Label>Contenido</Label>
-                    <div className="border rounded-md overflow-hidden bg-white">
-                      <ReactQuill
-                        ref={qrQuillRef}
-                        theme="snow"
-                        value={form.INVITATION_QR_EMAIL_TEMPLATE}
-                        onChange={(value) =>
-                          setForm((f) => ({ ...f, INVITATION_QR_EMAIL_TEMPLATE: value }))
-                        }
-                        placeholder="Escribe aquí el contenido del correo..."
-                        readOnly={loading}
-                        className="email-editor"
-                        modules={{
-                          toolbar: [
-                            [{ header: [1, 2, 3, false] }],
-                            ['bold', 'italic', 'underline', 'strike'],
-                            [{ color: [] }, { background: [] }],
-                            [{ list: 'ordered' }, { list: 'bullet' }],
-                            ['link', 'image'],
-                            ['clean'],
-                          ],
-                        }}
-                      />
+                    <div className="mb-2 inline-flex rounded-md border bg-white p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setQrEditorMode('visual')}
+                        className={`px-2.5 py-1 text-xs rounded ${qrEditorMode === 'visual' ? 'bg-slate-900 text-white' : 'text-slate-600'}`}
+                      >
+                        Texto
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQrEditorMode('html')}
+                        className={`px-2.5 py-1 text-xs rounded ${qrEditorMode === 'html' ? 'bg-slate-900 text-white' : 'text-slate-600'}`}
+                      >
+                        Codigo
+                      </button>
                     </div>
+                    <div className="border rounded-md overflow-hidden bg-white">
+                      {qrEditorMode === 'visual' ? (
+                        <ReactQuill
+                          ref={qrQuillRef}
+                          theme="snow"
+                          value={form.INVITATION_QR_EMAIL_TEMPLATE}
+                          onChange={(value) => setForm((f) => ({ ...f, INVITATION_QR_EMAIL_TEMPLATE: value }))}
+                          placeholder="Escribe el contenido del correo..."
+                          readOnly={loading}
+                          modules={{
+                            toolbar: [
+                              [{ header: [1, 2, 3, false] }],
+                              ['bold', 'italic', 'underline', 'strike'],
+                              [{ color: [] }, { background: [] }],
+                              [{ list: 'ordered' }, { list: 'bullet' }],
+                              ['link', 'image'],
+                              ['clean'],
+                            ],
+                          }}
+                        />
+                      ) : (
+                        <Textarea
+                          ref={qrHtmlRef}
+                          value={form.INVITATION_QR_EMAIL_TEMPLATE}
+                          onChange={(e) => setForm((f) => ({ ...f, INVITATION_QR_EMAIL_TEMPLATE: e.target.value }))}
+                          placeholder="Pega aqui HTML completo de email..."
+                          disabled={loading}
+                          className="min-h-[340px] font-mono text-xs leading-5 border-0 rounded-none"
+                        />
+                      )}
+                    </div>
+                    <p className="mt-2 text-xs text-gray-500">Coloca <code>{'{{qr_image}}'}</code> en el punto exacto donde quieres que aparezca la imagen QR.</p>
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
                       <span>Insertar variable:</span>
                       <Button type="button" size="sm" variant="outline" onClick={() => insertQrVariable('{{nombre}}')}>
@@ -443,22 +475,9 @@ export default function EmailSettings() {
                       <Button type="button" size="sm" variant="outline" onClick={() => insertQrVariable('{{qr_image}}')}>
                         QR (imagen)
                       </Button>
-                    </div>
-                  </div>
-                  <Separator />
-                  <div className="rounded-md border bg-white p-4">
-                    <div className="text-sm font-semibold mb-3">Vista previa</div>
-                    <div className="bg-slate-100 rounded-md p-4">
-                      <div className="mx-auto w-full max-w-[600px] bg-white border rounded-md shadow-sm p-6">
-                        <div
-                          className="email-preview prose max-w-none text-sm"
-                          dangerouslySetInnerHTML={{
-                            __html:
-                              decodeEscapedHtmlTemplate(form.INVITATION_QR_EMAIL_TEMPLATE) ||
-                              '<em>Escribe el contenido para ver la vista previa.</em>',
-                          }}
-                        />
-                      </div>
+                      <Button type="button" size="sm" variant="outline" onClick={() => insertQrVariable('{{qr_image_src}}')}>
+                        QR src
+                      </Button>
                     </div>
                   </div>
                 </AccordionContent>

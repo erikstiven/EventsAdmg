@@ -691,6 +691,25 @@ export const api = {
       }
       return await res.json();
     },
+    renderEmailPreview: async (template: string, values: Record<string, string>) => {
+      const res = await authSimple.fetch('/api/v1/admin/settings/email-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ template, values }),
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw { data: errData, message: 'Error al renderizar vista previa' };
+      }
+      return await res.json() as {
+        original_template: string;
+        rendered_html: string;
+        smtp_html: string;
+        unresolved_variables: string[];
+        lengths: Record<string, number>;
+        digests: Record<string, string>;
+      };
+    },
   },
 };
 

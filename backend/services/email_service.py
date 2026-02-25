@@ -5,12 +5,38 @@ import re
 import html
 from email.message import EmailMessage
 from email.utils import make_msgid
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 logger = logging.getLogger(__name__)
 
 
 class EmailService:
+    @staticmethod
+    def normalize_template_html(content: str) -> str:
+        """Normalize legacy escaped HTML templates stored by rich-text editors."""
+        source = (content or "").strip()
+        if not source:
+            return ""
+
+        if "&lt;" not in source and "&gt;" not in source and "&amp;" not in source:
+            return source
+
+        decoded = html.unescape(source)
+        # Legacy Quill values may wrap escaped tags in standalone <p> nodes.
+        decoded = re.sub(
+            r"<p>\s*(?:\u00a0|&nbsp;|\s)*((?:</?[a-zA-Z][^>]*>\s*)+)\s*</p>",
+            r"\1",
+            decoded,
+            flags=re.IGNORECASE,
+        )
+        decoded = re.sub(
+            r"<p>\s*(?:<br\s*/?>|\u00a0|&nbsp;|\s)*</p>",
+            "",
+            decoded,
+            flags=re.IGNORECASE,
+        )
+        return decoded.strip()
+
     @staticmethod
     def _get_smtp_config() -> dict:
         return {
@@ -23,15 +49,36 @@ class EmailService:
         }
 
     @staticmethod
-    def _render_template(template: str, values: dict) -> str:
-        content = template
+    def render_template_variables(template: str, values: Mapping[str, Any]) -> str:
+        content = EmailService.normalize_template_html(template)
         for key, value in values.items():
-            content = content.replace(f"{{{{{key}}}}}", value or "")
-        content = content.replace("\\n", "\n")
-        # Recover HTML when editor/config stores escaped tags.
-        if "&lt;" in content or "&#60;" in content:
-            content = html.unescape(content)
+            content = content.replace(f"{{{{{key}}}}}", "" if value is None else str(value))
         return content
+
+    @staticmethod
+    def build_email_html(content: str) -> str:
+        source = (content or "").strip()
+        if not source:
+            return ""
+        if re.search(r"<!doctype html|<html[\s>]", source, re.IGNORECASE):
+            return source
+        return (
+            "<!doctype html>"
+            "<html lang=\"es\">"
+            "<head>"
+            "<meta charset=\"UTF-8\" />"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />"
+            "</head>"
+            "<body style=\"margin:0;padding:0;background:#e9eef5;\">"
+            f"{source}"
+            "</body>"
+            "</html>"
+        )
+
+    @staticmethod
+    def render_template(template: str, values: dict) -> str:
+        # Backward-compatible alias.
+        return EmailService.render_template_variables(template, values)
 
     @staticmethod
     def _looks_like_html(content: str) -> bool:
@@ -61,7 +108,7 @@ class EmailService:
             logger.warning("No se proporciono email de destino. Se omitio el envio.")
             return False
 
-        body = cls._render_template(template, values)
+        body = cls.render_template_variables(template, values)
 
         message = EmailMessage()
         message["Subject"] = subject
