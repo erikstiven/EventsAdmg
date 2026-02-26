@@ -21,6 +21,8 @@ import {
 import { biometriaService } from '@/services/biometriaService';
 
 const MIN_BRIGHTNESS = 80;
+const MIN_FACE_RATIO = 0.2;
+const MAX_FACE_RATIO = 0.72;
 const CAPTURE_GRACE_MS = 1200;
 const VALID_STREAK_REQUIRED = 3;
 const STATUS_THROTTLE_MS = 250;
@@ -82,6 +84,25 @@ export const FaceModal: React.FC<FaceModalProps> = ({
     lastDetection.current = null;
   };
 
+  const mapCameraErrorMessage = (error: unknown) => {
+    const raw = String((error as any)?.message || '').toLowerCase();
+    const name = String((error as any)?.name || '').toLowerCase();
+
+    if (name.includes('notallowed') || raw.includes('permission') || raw.includes('denied')) {
+      return 'Permite el acceso a la cámara para continuar.';
+    }
+    if (name.includes('notfound') || raw.includes('requested device not found')) {
+      return 'No se encontró una cámara disponible en este dispositivo.';
+    }
+    if (name.includes('notreadable') || raw.includes('track start')) {
+      return 'La cámara está en uso por otra aplicación. Ciérrala e inténtalo de nuevo.';
+    }
+    if (name.includes('abort') || raw.includes('play() request was interrupted')) {
+      return 'La cámara se reinició durante la apertura. Intenta nuevamente.';
+    }
+    return 'No se pudo acceder a la cámara. Intenta nuevamente.';
+  };
+
   useEffect(() => {
     if (!open) {
       stopCamera();
@@ -108,7 +129,7 @@ export const FaceModal: React.FC<FaceModalProps> = ({
         setStatusMessage('No se detecta rostro');
         runDetectionLoop();
       } catch (err: any) {
-        setCameraError(err?.message || 'No se pudo acceder a la cámara.');
+        setCameraError(mapCameraErrorMessage(err));
         setStatusMessage('');
       }
     };
@@ -169,11 +190,20 @@ export const FaceModal: React.FC<FaceModalProps> = ({
           brightness = computeAverageBrightness(frameCtx, frameCanvas.width, frameCanvas.height);
         }
         const centered = isFaceCentered(box, canvas.width, canvas.height);
+        const faceRatio = box.width / canvas.width;
 
         if (brightness < MIN_BRIGHTNESS) {
           nextStatus = 'Iluminación insuficiente';
           validStreak.current = 0;
           drawFaceBox(ctx, box, '#ef4444');
+        } else if (faceRatio < MIN_FACE_RATIO) {
+          nextStatus = 'Acércate un poco más a la cámara';
+          validStreak.current = 0;
+          drawFaceBox(ctx, box, '#f97316');
+        } else if (faceRatio > MAX_FACE_RATIO) {
+          nextStatus = 'Aléjate un poco de la cámara';
+          validStreak.current = 0;
+          drawFaceBox(ctx, box, '#f97316');
         } else if (!centered) {
           nextStatus = 'Rostro no centrado';
           validStreak.current = 0;
