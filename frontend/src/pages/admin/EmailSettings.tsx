@@ -22,8 +22,8 @@ export default function EmailSettings() {
   const qrHtmlRef = useRef<HTMLTextAreaElement | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [invitationEditorMode, setInvitationEditorMode] = useState<'visual' | 'html'>('visual');
-  const [qrEditorMode, setQrEditorMode] = useState<'visual' | 'html'>('visual');
+  const [invitationEditorMode, setInvitationEditorMode] = useState<'visual' | 'html'>('html');
+  const [qrEditorMode, setQrEditorMode] = useState<'visual' | 'html'>('html');
   const [form, setForm] = useState({
     BIOMETRIC_MATCH_THRESHOLD: '0.60',
     BIOMETRIC_MODEL_NAME: 'buffalo_l',
@@ -42,13 +42,17 @@ export default function EmailSettings() {
   const normalizeTemplateHtml = (content: string) => {
     const source = String(content || '').trim();
     if (!source) return '';
-    if (!source.includes('&lt;') && !source.includes('&gt;') && !source.includes('&amp;')) return source;
-
     const parser = new DOMParser();
-    const decoded = parser.parseFromString(source, 'text/html').documentElement.textContent || source;
+    const decoded = (source.includes('&lt;') || source.includes('&gt;') || source.includes('&amp;'))
+      ? (parser.parseFromString(source, 'text/html').documentElement.textContent || source)
+      : source;
     return decoded
+      .replace(/\u00a0/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
       .replace(/<p>\s*(?:&nbsp;|\u00a0|\s)*((?:<\/?[a-zA-Z][^>]*>\s*)+)\s*<\/p>/gi, '$1')
       .replace(/<p>\s*(?:<br\s*\/?>|&nbsp;|\u00a0|\s)*<\/p>/gi, '')
+      .replace(/<p>\s*<\/p>/gi, '')
+      .replace(/>\s+</g, '><')
       .trim();
   };
 

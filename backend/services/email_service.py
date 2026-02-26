@@ -18,10 +18,9 @@ class EmailService:
         if not source:
             return ""
 
-        if "&lt;" not in source and "&gt;" not in source and "&amp;" not in source:
-            return source
-
-        decoded = html.unescape(source)
+        decoded = html.unescape(source) if ("&lt;" in source or "&gt;" in source or "&amp;" in source) else source
+        decoded = decoded.replace("\u00a0", " ")
+        decoded = re.sub(r"&nbsp;", " ", decoded, flags=re.IGNORECASE)
         # Legacy Quill values may wrap escaped tags in standalone <p> nodes.
         decoded = re.sub(
             r"<p>\s*(?:\u00a0|&nbsp;|\s)*((?:</?[a-zA-Z][^>]*>\s*)+)\s*</p>",
@@ -35,6 +34,8 @@ class EmailService:
             decoded,
             flags=re.IGNORECASE,
         )
+        decoded = re.sub(r"<p>\s*</p>", "", decoded, flags=re.IGNORECASE)
+        decoded = re.sub(r">\s+<", "><", decoded)
         return decoded.strip()
 
     @staticmethod

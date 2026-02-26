@@ -58,6 +58,7 @@ async def initialize_database():
         await ensure_invitation_group_status_id_columns()
         await ensure_checkins_tracking_columns()
         await ensure_performance_indexes()
+        await ensure_audit_events_view()
         await seed_rbac_catalog()
         await ensure_users_role_id_column()
         await ensure_users_superuser_column()
@@ -367,6 +368,10 @@ async def ensure_performance_indexes():
         "CREATE INDEX IF NOT EXISTS idx_biometric_embeddings_person_active ON biometric_embeddings(person_id, is_active)",
         "CREATE INDEX IF NOT EXISTS idx_biometric_attempts_person_created ON biometric_attempts(person_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_biometric_attempts_result_created ON biometric_attempts(result, created_at)",
+        # Security audit logs
+        "CREATE INDEX IF NOT EXISTS idx_security_audit_logs_event_created ON security_audit_logs(event_type, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_security_audit_logs_target_created ON security_audit_logs(target_type, target_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_security_audit_logs_actor_created ON security_audit_logs(actor_user_id, created_at)",
     ]
     try:
         async with db_manager.async_session_maker() as session:
@@ -379,6 +384,166 @@ async def ensure_performance_indexes():
             await session.commit()
     except Exception as exc:
         logger.warning("[DB] Could not ensure performance indexes: %s", exc)
+
+
+async def ensure_audit_events_view():
+    """Create a consolidated audit-events view for analytics and UI timelines."""
+    if not db_manager.async_session_maker:
+        return
+    drop_sql = "DROP VIEW IF EXISTS vw_audit_events"
+    create_sql = """
+        CREATE VIEW vw_audit_events AS
+        SELECT
+            'igh-' || CAST(h.id AS TEXT) AS event_uid,
+            h.changed_at AS event_time,
+            'invitation_group' AS category,
+            'GROUP_STATUS_CHANGED' AS event_type,
+            h.to_status AS outcome,
+            CASE
+                WHEN lower(coalesce(h.to_status, '')) LIKE '%rechaz%' THEN 'warn'
+                ELSE 'info'
+            END AS severity,
+            g.event_id AS event_id,
+            e.name AS event_name,
+            NULL AS invitation_id,
+            h.invitation_group_id AS invitation_group_id,
+            NULL AS attendee_id,
+            g.titular_name AS attendee_name,
+            h.changed_by AS actor_user_id,
+            'invitation_group' AS entity_type,
+            CAST(h.invitation_group_id AS TEXT) AS entity_id,
+            'invitation_group_status_history' AS source_table,
+            h.id AS source_pk,
+            ('Estado: ' || coalesce(h.from_status, 'Inicial') || ' -> ' || coalesce(h.to_status, 'N/A')) AS summary,
+            h.payload AS metadata_json
+        FROM invitation_group_status_history h
+        JOIN invitation_groups g ON g.id = h.invitation_group_id
+        LEFT JOIN events e ON e.id = g.event_id
+
+        UNION ALL
+
+        SELECT
+            'ish-' || CAST(h.id AS TEXT) AS event_uid,
+            h.changed_at AS event_time,
+            'invitation' AS category,
+            'INVITATION_STATUS_CHANGED' AS event_type,
+            h.to_status AS outcome,
+            CASE
+                WHEN h.to_status IN ('RECHAZADO', 'REVOCADO') THEN 'warn'
+                ELSE 'info'
+            END AS severity,
+            i.event_id AS event_id,
+            e.name AS event_name,
+            h.invitation_id AS invitation_id,
+            NULL AS invitation_group_id,
+            i.attendee_id AS attendee_id,
+            a.full_name AS attendee_name,
+            h.changed_by AS actor_user_id,
+            'invitation' AS entity_type,
+            CAST(h.invitation_id AS TEXT) AS entity_id,
+            'invitation_status_history' AS source_table,
+            h.id AS source_pk,
+            ('Estado: ' || coalesce(h.from_status, 'Inicial') || ' -> ' || coalesce(h.to_status, 'N/A')) AS summary,
+            h.reason AS metadata_json
+        FROM invitation_status_history h
+        JOIN invitations i ON i.id = h.invitation_id
+        LEFT JOIN attendees a ON a.id = i.attendee_id
+        LEFT JOIN events e ON e.id = i.event_id
+
+        UNION ALL
+
+        SELECT
+            'chk-' || CAST(c.id AS TEXT) AS event_uid,
+            c.checked_in_at AS event_time,
+            'checkin' AS category,
+            CASE
+                WHEN c.validation_method = 'FINGERPRINT' THEN 'CHECKIN_MANUAL_OVERRIDE'
+                ELSE 'CHECKIN'
+            END AS event_type,
+            'SUCCESS' AS outcome,
+            'info' AS severity,
+            c.event_id AS event_id,
+            e.name AS event_name,
+            c.invitation_id AS invitation_id,
+            CASE WHEN c.participant_role IN ('titular', 'acompanante') THEN c.invitation_id ELSE NULL END AS invitation_group_id,
+            c.attendee_id AS attendee_id,
+            COALESCE(a.full_name, gp.name, g.titular_name) AS attendee_name,
+            c.staff_user_id AS actor_user_id,
+            'checkin' AS entity_type,
+            CAST(c.id AS TEXT) AS entity_id,
+            'checkins' AS source_table,
+            c.id AS source_pk,
+            ('Check-in por ' || coalesce(c.validation_method, 'N/A')) AS summary,
+            c.validation_notes AS metadata_json
+        FROM checkins c
+        LEFT JOIN attendees a ON a.id = c.attendee_id
+        LEFT JOIN invitation_group_people gp ON gp.id = c.invitation_group_person_id
+        LEFT JOIN invitation_groups g ON g.id = c.invitation_id
+        LEFT JOIN events e ON e.id = c.event_id
+
+        UNION ALL
+
+        SELECT
+            'bio-' || CAST(b.id AS TEXT) AS event_uid,
+            b.created_at AS event_time,
+            'biometric' AS category,
+            'BIOMETRIC_ATTEMPT' AS event_type,
+            b.result AS outcome,
+            CASE
+                WHEN b.result IN ('NO_MATCH', 'NO_EMBEDDING') THEN 'warn'
+                ELSE 'info'
+            END AS severity,
+            NULL AS event_id,
+            NULL AS event_name,
+            NULL AS invitation_id,
+            NULL AS invitation_group_id,
+            b.person_id AS attendee_id,
+            a.full_name AS attendee_name,
+            NULL AS actor_user_id,
+            'attendee' AS entity_type,
+            CAST(b.person_id AS TEXT) AS entity_id,
+            'biometric_attempts' AS source_table,
+            b.id AS source_pk,
+            ('Resultado biométrico: ' || coalesce(b.result, 'N/A')) AS summary,
+            b.device_info AS metadata_json
+        FROM biometric_attempts b
+        LEFT JOIN attendees a ON a.id = b.person_id
+
+        UNION ALL
+
+        SELECT
+            'sec-' || CAST(s.id AS TEXT) AS event_uid,
+            s.created_at AS event_time,
+            'security' AS category,
+            s.event_type AS event_type,
+            NULL AS outcome,
+            CASE
+                WHEN s.event_type = 'ACCESS_DENIED' THEN 'high'
+                WHEN s.event_type IN ('SETTING_UPDATED', 'SETTING_ADDED', 'SETTING_DELETED') THEN 'warn'
+                ELSE 'info'
+            END AS severity,
+            NULL AS event_id,
+            NULL AS event_name,
+            NULL AS invitation_id,
+            NULL AS invitation_group_id,
+            NULL AS attendee_id,
+            NULL AS attendee_name,
+            s.actor_user_id AS actor_user_id,
+            lower(coalesce(s.target_type, 'security')) AS entity_type,
+            s.target_id AS entity_id,
+            'security_audit_logs' AS source_table,
+            s.id AS source_pk,
+            (coalesce(s.method, '') || ' ' || coalesce(s.endpoint, '')) AS summary,
+            s.details_json AS metadata_json
+        FROM security_audit_logs s
+    """
+    try:
+        async with db_manager.async_session_maker() as session:
+            await session.execute(text(drop_sql))
+            await session.execute(text(create_sql))
+            await session.commit()
+    except Exception as exc:
+        logger.warning("[DB] Could not ensure audit events view: %s", exc)
 
 
 async def seed_rbac_catalog():

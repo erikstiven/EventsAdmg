@@ -109,6 +109,47 @@ export interface BiometricValidation {
   created_at: string;
 }
 
+export interface AuditEventItem {
+  event_uid: string;
+  event_time: string;
+  category: string;
+  event_type: string;
+  outcome?: string | null;
+  severity: string;
+  event_id?: number | null;
+  event_name?: string | null;
+  invitation_id?: number | null;
+  invitation_group_id?: number | null;
+  attendee_id?: number | null;
+  attendee_name?: string | null;
+  actor_user_id?: string | null;
+  entity_type: string;
+  entity_id?: string | null;
+  source_table: string;
+  source_pk: number;
+  summary?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface AuditEventsResponse {
+  items: AuditEventItem[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface AuditKpisResponse {
+  total_events: number;
+  checkins: number;
+  biometric_attempts: number;
+  biometric_matches: number;
+  biometric_no_match: number;
+  manual_overrides: number;
+  access_denied: number;
+  config_changes: number;
+  biometric_match_rate: number;
+}
+
 export interface UserRole {
   id: number;
   user_id: string;
@@ -571,6 +612,56 @@ export const api = {
       const res = await authSimple.fetch(endpoint);
       if (!res.ok) throw new Error(await api.checkIns.parseError(res, 'Error al cargar ingresos recientes'));
       return await res.json();
+    },
+  },
+
+  audit: {
+    kpis: async (params?: { date_from?: string; date_to?: string; event_id?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.date_from) qs.set('date_from', params.date_from);
+      if (params?.date_to) qs.set('date_to', params.date_to);
+      if (params?.event_id !== undefined) qs.set('event_id', String(params.event_id));
+      const endpoint = qs.toString() ? `/api/v1/audit/kpis?${qs.toString()}` : '/api/v1/audit/kpis';
+      const res = await authSimple.fetch(endpoint);
+      if (!res.ok) throw new Error('Error al cargar KPIs de auditoría');
+      return (await res.json()) as AuditKpisResponse;
+    },
+    events: async (params?: {
+      skip?: number;
+      limit?: number;
+      search?: string;
+      date_from?: string;
+      date_to?: string;
+      event_id?: number;
+      category?: string;
+      event_type?: string;
+      outcome?: string;
+      severity?: string;
+      actor_user_id?: string;
+    }) => {
+      const qs = new URLSearchParams();
+      if (params?.skip !== undefined) qs.set('skip', String(params.skip));
+      if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+      if (params?.search) qs.set('search', params.search);
+      if (params?.date_from) qs.set('date_from', params.date_from);
+      if (params?.date_to) qs.set('date_to', params.date_to);
+      if (params?.event_id !== undefined) qs.set('event_id', String(params.event_id));
+      if (params?.category) qs.set('category', params.category);
+      if (params?.event_type) qs.set('event_type', params.event_type);
+      if (params?.outcome) qs.set('outcome', params.outcome);
+      if (params?.severity) qs.set('severity', params.severity);
+      if (params?.actor_user_id) qs.set('actor_user_id', params.actor_user_id);
+      const endpoint = qs.toString() ? `/api/v1/audit/events?${qs.toString()}` : '/api/v1/audit/events';
+      const res = await authSimple.fetch(endpoint);
+      if (!res.ok) throw new Error('Error al cargar eventos de auditoría');
+      return (await res.json()) as AuditEventsResponse;
+    },
+    timeline: async (entityType: string, entityId: string, limit: number = 100) => {
+      const res = await authSimple.fetch(
+        `/api/v1/audit/timeline/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}?limit=${limit}`
+      );
+      if (!res.ok) throw new Error('Error al cargar timeline');
+      return (await res.json()) as AuditEventItem[];
     },
   },
 

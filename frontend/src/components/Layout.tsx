@@ -103,6 +103,45 @@ const participantsSummary = (item: any) => {
   return { total, approved, rejected, pending, completeDocs };
 };
 
+const buildPendingNotificationContent = (item: any, id: number) => {
+  const summary = participantsSummary(item);
+  const eventLabel = item.event_name || `Evento ${item.event_id}`;
+  const normalizedStatus = normalizeInvitationGroupStatus(String(item?.status || ""));
+  const createdAt = String(item?.created_at || "").trim();
+  const updatedAt = String(item?.updated_at || "").trim();
+  const hasBeenUpdated = Boolean(createdAt && updatedAt && createdAt !== updatedAt);
+
+  if (normalizedStatus === "pendiente de actualizacion") {
+    return {
+      type: "correction" as const,
+      title: `${groupLabel(id)} · Corrección recibida`,
+      message: `${eventLabel} · ${summary.completeDocs} de ${summary.total} integrantes con documentos listos para revisión.`,
+    };
+  }
+
+  if (normalizedStatus === "aprobado parcial") {
+    return {
+      type: "status_change" as const,
+      title: `${groupLabel(id)} · Revisión parcial pendiente`,
+      message: `${eventLabel} · ${summary.approved} aprob., ${summary.rejected} rech., ${summary.pending} por decidir.`,
+    };
+  }
+
+  if (hasBeenUpdated) {
+    return {
+      type: "updated" as const,
+      title: `${groupLabel(id)} · Actualización recibida`,
+      message: `${eventLabel} · El registro fue actualizado y requiere revisión.`,
+    };
+  }
+
+  return {
+    type: "new" as const,
+    title: `${groupLabel(id)} · Nueva solicitud`,
+    message: `${eventLabel} · ${summary.completeDocs} de ${summary.total} integrantes con registro completo.`,
+  };
+};
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -171,16 +210,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
           items.forEach((item: any) => {
             const id = Number(item.id);
             if (!Number.isFinite(id)) return;
-            const summary = participantsSummary(item);
+            const content = buildPendingNotificationContent(item, id);
             upserted.set(id, {
               id: upserted.get(id)?.id || `${id}-seed-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
               invitation_id: id,
               group_label: groupLabel(id),
-              title: `${groupLabel(id)} · Nueva solicitud`,
-              message: `${item.event_name || `Evento ${item.event_id}`} · ${summary.completeDocs} de ${summary.total} integrantes con registro completo.`,
+              title: content.title,
+              message: content.message,
               created_at: String(item.updated_at || item.created_at || new Date().toISOString()),
               read: false,
-              type: "new",
+              type: content.type,
             });
           });
           return Array.from(upserted.values())
@@ -215,17 +254,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
         newItems.forEach((item: any) => {
           const id = Number(item.id);
           if (!Number.isFinite(id)) return;
-          const summary = participantsSummary(item);
+          const content = buildPendingNotificationContent(item, id);
           const existing = upserted.get(id);
           upserted.set(id, {
             id: existing?.id || `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             invitation_id: id,
             group_label: groupLabel(id),
-            title: `${groupLabel(id)} · Nueva solicitud`,
-            message: `${item.event_name || `Evento ${item.event_id}`} · ${summary.completeDocs} de ${summary.total} integrantes con registro completo.`,
+            title: content.title,
+            message: content.message,
             created_at: String(item.updated_at || item.created_at || new Date().toISOString()),
             read: false,
-            type: "new",
+            type: content.type,
           });
         });
 

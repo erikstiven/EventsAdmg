@@ -1044,13 +1044,17 @@ export default function PendingApprovals() {
       </Dialog>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="w-[94vw] max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{previewTitle}</DialogTitle>
+        <DialogContent className="w-[92vw] max-w-3xl max-h-[88vh] overflow-y-auto p-5 sm:p-6">
+          <DialogHeader className="pb-1">
+            <DialogTitle className="text-xl">{previewTitle}</DialogTitle>
           </DialogHeader>
-          <div className="rounded-md border bg-gray-50 p-3 flex items-center justify-center">
+          <div className="rounded-lg border bg-slate-50 p-3 sm:p-4 flex items-center justify-center">
             {previewUrl ? (
-              <img src={previewUrl} alt={previewTitle} className="max-h-[70vh] w-auto object-contain" />
+              <img
+                src={previewUrl}
+                alt={previewTitle}
+                className="max-h-[68vh] max-w-full w-auto object-contain rounded-md"
+              />
             ) : (
               <div className="text-sm text-gray-500">Sin imagen</div>
             )}

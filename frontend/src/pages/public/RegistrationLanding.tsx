@@ -19,6 +19,13 @@ import {
 import InvitationGroupStatusBadge from '@/components/InvitationGroupStatusBadge';
 import { useToast } from '@/hooks/use-toast';
 import { api } from '@/lib/api';
+import {
+  computeAverageBrightness,
+  detectFaces,
+  drawFaceBox,
+  isFaceCentered,
+  loadFaceModels,
+} from '@/services/faceService';
 
 type Participant = {
   name: string;
@@ -33,6 +40,20 @@ type Participant = {
   docName?: string;
   selfieUrl?: string;
   docUrl?: string;
+};
+
+type PublicInvitationData = {
+  event_name?: string;
+  group_size?: number;
+  status?: string;
+  titular_name?: string;
+  titular_identification?: string;
+  email?: string;
+  phone?: string;
+  fingerprint_code?: string;
+  titular_selfie_url?: string;
+  titular_doc_url?: string;
+  companions?: Array<any>;
 };
 
 export default function RegistrationLanding() {
@@ -54,6 +75,8 @@ export default function RegistrationLanding() {
   const docInputRef = useRef<HTMLInputElement | null>(null);
   const selfieInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const selfieGuideCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const selfieGuideLoopRef = useRef<number | null>(null);
   const docVideoRef = useRef<HTMLVideoElement | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState('');
@@ -65,8 +88,14 @@ export default function RegistrationLanding() {
   const [selectedDocPreview, setSelectedDocPreview] = useState('');
   const [selectedSelfieName, setSelectedSelfieName] = useState('');
   const [selectedSelfiePreview, setSelectedSelfiePreview] = useState('');
+  const [selfieQualityMessage, setSelfieQualityMessage] = useState('Preparando guía de captura...');
+  const [selfieQualityOk, setSelfieQualityOk] = useState(false);
   const [confirmSubmitOpen, setConfirmSubmitOpen] = useState(false);
   const [showSaving, setShowSaving] = useState(false);
+
+  const MIN_BRIGHTNESS = 85;
+  const MIN_FACE_RATIO = 0.18;
+  const MAX_FACE_RATIO = 0.62;
 
   const normalizePublicStatus = (raw?: string) =>
     (raw || '')
@@ -100,6 +129,45 @@ export default function RegistrationLanding() {
     return 'El registro está cerrado y ya no puedes editar desde este enlace.';
   }, [status]);
 
+  const hydrateFromPublicData = (data: PublicInvitationData) => {
+    setLoadError('');
+    setEventName(data.event_name || '');
+    setGroupSize(data.group_size || 3);
+    setStatus(data.status || '');
+    setLocked(!isPublicEditableStatus(data.status || ''));
+    const titular: Participant = {
+      name: data.titular_name || '',
+      cedula: data.titular_identification || '',
+      email: data.email || '',
+      telefono: data.phone || '',
+      codigo: data.fingerprint_code || '',
+      rol: 'Titular',
+      selfie: Boolean(data.titular_selfie_url),
+      doc: Boolean(data.titular_doc_url),
+      selfieName: '',
+      docName: '',
+      selfieUrl: data.titular_selfie_url || '',
+      docUrl: data.titular_doc_url || '',
+    };
+    const comps: Participant[] = Array.isArray(data.companions)
+      ? data.companions.map((c: any) => ({
+          name: c.name || '',
+          cedula: c.cedula || '',
+          email: c.email || '',
+          telefono: c.telefono || '',
+          codigo: c.codigo || '',
+          rol: 'Acompañante',
+          selfie: Boolean(c.selfie_url) || Boolean(c.selfie),
+          doc: Boolean(c.doc_url) || Boolean(c.doc),
+          selfieName: c.selfieName || '',
+          docName: c.docName || '',
+          selfieUrl: c.selfie_url || '',
+          docUrl: c.doc_url || '',
+        }))
+      : [];
+    setParticipants([titular, ...comps]);
+  };
+
   useEffect(() => {
     const load = async () => {
       if (!token) {
@@ -109,42 +177,7 @@ export default function RegistrationLanding() {
       }
       try {
         const data = await api.publicInvitations.getByToken(token);
-        setLoadError('');
-        setEventName(data.event_name || '');
-        setGroupSize(data.group_size || 3);
-        setStatus(data.status || '');
-        setLocked(!isPublicEditableStatus(data.status || ''));
-        const titular: Participant = {
-          name: data.titular_name || '',
-          cedula: data.titular_identification || '',
-          email: data.email || '',
-          telefono: data.phone || '',
-          codigo: data.fingerprint_code || '',
-          rol: 'Titular',
-          selfie: Boolean(data.titular_selfie_url),
-          doc: Boolean(data.titular_doc_url),
-          selfieName: '',
-          docName: '',
-          selfieUrl: data.titular_selfie_url || '',
-          docUrl: data.titular_doc_url || '',
-        };
-        const comps: Participant[] = Array.isArray(data.companions)
-          ? data.companions.map((c: any) => ({
-              name: c.name || '',
-              cedula: c.cedula || '',
-              email: c.email || '',
-              telefono: c.telefono || '',
-              codigo: c.codigo || '',
-              rol: 'Acompañante',
-              selfie: Boolean(c.selfie_url) || Boolean(c.selfie),
-              doc: Boolean(c.doc_url) || Boolean(c.doc),
-              selfieName: c.selfieName || '',
-              docName: c.docName || '',
-              selfieUrl: c.selfie_url || '',
-              docUrl: c.doc_url || '',
-            }))
-          : [];
-        setParticipants([titular, ...comps]);
+        hydrateFromPublicData(data);
       } catch (error: any) {
         setLoadError(error?.message || 'Token inválido o expirado.');
         toast({
@@ -194,8 +227,16 @@ export default function RegistrationLanding() {
 
   useEffect(() => {
     if (!showBio) return;
-    void startSelfieCamera();
+    if (!selectedSelfiePreview) {
+      void startSelfieCamera();
+      runSelfieQualityLoop();
+    } else {
+      stopSelfieGuideLoop();
+      setSelfieQualityOk(true);
+      setSelfieQualityMessage('Vista previa lista para guardar');
+    }
     return () => {
+      stopSelfieGuideLoop();
       if (videoRef.current?.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach((track) => track.stop());
@@ -203,8 +244,10 @@ export default function RegistrationLanding() {
       }
       setCameraActive(false);
       setCameraError('');
+      setSelfieQualityOk(false);
+      setSelfieQualityMessage('Preparando guía de captura...');
     };
-  }, [showBio]);
+  }, [showBio, selectedSelfiePreview]);
 
   useEffect(() => {
     if (!showDoc) return;
@@ -272,6 +315,119 @@ export default function RegistrationLanding() {
     });
   };
 
+  const stopSelfieGuideLoop = () => {
+    if (selfieGuideLoopRef.current) {
+      cancelAnimationFrame(selfieGuideLoopRef.current);
+      selfieGuideLoopRef.current = null;
+    }
+    if (selfieGuideCanvasRef.current) {
+      const ctx = selfieGuideCanvasRef.current.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, selfieGuideCanvasRef.current.width, selfieGuideCanvasRef.current.height);
+      }
+    }
+  };
+
+  const runSelfieQualityLoop = () => {
+    const loop = async () => {
+      if (!showBio || selectedSelfiePreview || !videoRef.current || !selfieGuideCanvasRef.current) return;
+      const video = videoRef.current;
+      const canvas = selfieGuideCanvasRef.current;
+      if (!video.videoWidth || !video.videoHeight) {
+        selfieGuideLoopRef.current = requestAnimationFrame(loop);
+        return;
+      }
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        selfieGuideLoopRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      let message = 'Rostro no detectado';
+      let ok = false;
+      let boxColor = '#ef4444';
+
+      try {
+        await loadFaceModels('/models');
+        const { resizedDetections } = await detectFaces(video, '/models');
+        if (resizedDetections.length === 0) {
+          message = 'No se detecta tu rostro';
+        } else if (resizedDetections.length > 1) {
+          message = 'Se detectan varias personas, deja solo un rostro en cámara';
+        } else {
+          const detection = resizedDetections[0];
+          const box = detection.detection.box;
+          const frameCanvas = document.createElement('canvas');
+          frameCanvas.width = video.videoWidth;
+          frameCanvas.height = video.videoHeight;
+          const frameCtx = frameCanvas.getContext('2d');
+          let brightness = 0;
+          if (frameCtx) {
+            frameCtx.drawImage(video, 0, 0, frameCanvas.width, frameCanvas.height);
+            brightness = computeAverageBrightness(frameCtx, frameCanvas.width, frameCanvas.height);
+          }
+          const centered = isFaceCentered(box, canvas.width, canvas.height);
+          const faceRatio = box.width / canvas.width;
+
+          if (!centered) {
+            message = 'Centra tu rostro dentro del círculo';
+            boxColor = '#f97316';
+          } else if (brightness < MIN_BRIGHTNESS) {
+            message = 'Aumenta la luz y usa un fondo claro';
+            boxColor = '#f59e0b';
+          } else if (faceRatio < MIN_FACE_RATIO) {
+            message = 'Acércate un poco más a la cámara';
+            boxColor = '#f97316';
+          } else if (faceRatio > MAX_FACE_RATIO) {
+            message = 'Aléjate un poco de la cámara';
+            boxColor = '#f97316';
+          } else {
+            message = 'Perfecto: postura y luz correctas';
+            boxColor = '#22c55e';
+            ok = true;
+          }
+          drawFaceBox(ctx, box, boxColor);
+        }
+      } catch {
+        message = 'No se pudo validar calidad en tiempo real';
+        ok = true;
+      }
+
+      setSelfieQualityMessage(message);
+      setSelfieQualityOk(ok);
+      selfieGuideLoopRef.current = requestAnimationFrame(loop);
+    };
+
+    stopSelfieGuideLoop();
+    selfieGuideLoopRef.current = requestAnimationFrame(loop);
+  };
+
+  const mapCameraErrorMessage = (error: unknown) => {
+    const raw = String((error as any)?.message || "").toLowerCase();
+    const name = String((error as any)?.name || "").toLowerCase();
+
+    if (name.includes('notallowed') || raw.includes('permission') || raw.includes('denied')) {
+      return 'Permite el acceso a la cámara para continuar.';
+    }
+    if (name.includes('notfound') || raw.includes('requested device not found')) {
+      return 'No se encontró una cámara disponible en este dispositivo.';
+    }
+    if (name.includes('notreadable') || raw.includes('track start')) {
+      return 'La cámara está en uso por otra aplicación. Ciérrala e inténtalo de nuevo.';
+    }
+    if (name.includes('abort') || raw.includes('play() request was interrupted')) {
+      return 'La cámara se reinició durante la apertura. Presiona "Reactivar cámara".';
+    }
+    if (name.includes('overconstrained')) {
+      return 'No se pudo iniciar la cámara con la configuración actual.';
+    }
+    return 'No se pudo acceder a la cámara. Intenta nuevamente.';
+  };
+
   const startSelfieCamera = async () => {
     try {
       setCameraError('');
@@ -285,7 +441,7 @@ export default function RegistrationLanding() {
         setCameraActive(true);
       }
     } catch (error: any) {
-      setCameraError(error?.message || 'No se pudo acceder a la cámara.');
+      setCameraError(mapCameraErrorMessage(error));
       setCameraActive(false);
     }
   };
@@ -314,12 +470,15 @@ export default function RegistrationLanding() {
     setSelfieBlob(null);
     setSelectedSelfieName('');
     replaceSelfiePreview('');
+    setSelfieQualityOk(false);
+    setSelfieQualityMessage('Preparando guía de captura...');
     if (selfieInputRef.current) {
       selfieInputRef.current.value = '';
     }
     if (!cameraActive) {
       void startSelfieCamera();
     }
+    runSelfieQualityLoop();
   };
 
   const captureDocFromCamera = async () => {
@@ -355,7 +514,7 @@ export default function RegistrationLanding() {
         setDocCameraActive(true);
       }
     } catch (error: any) {
-      setDocCameraError(error?.message || 'No se pudo acceder a la cámara.');
+      setDocCameraError(mapCameraErrorMessage(error));
       setDocCameraActive(false);
     }
   };
@@ -406,7 +565,7 @@ export default function RegistrationLanding() {
         selfie_url: c.selfieUrl,
         doc_url: c.docUrl,
       }));
-      await api.publicInvitations.register(token, {
+      const response = await api.publicInvitations.register(token, {
         titular_name: titular?.name || '',
         titular_identification: titular?.cedula || '',
         email: titular?.email || '',
@@ -417,11 +576,11 @@ export default function RegistrationLanding() {
         companions: companions,
         status: 'Pendiente aprobación',
       });
+      hydrateFromPublicData(response);
       toast({
         title: 'Registro enviado',
         description: 'Tus datos fueron enviados correctamente.',
       });
-      setLocked(true);
     } catch (error: any) {
       toast({
         title: 'Error',
@@ -663,6 +822,12 @@ export default function RegistrationLanding() {
                 />
               )}
               {!selectedSelfiePreview && (
+                <canvas
+                  ref={selfieGuideCanvasRef}
+                  className="pointer-events-none absolute inset-0 h-full w-full"
+                />
+              )}
+              {!selectedSelfiePreview && (
                 <div className="pointer-events-none absolute inset-0">
                   <div
                     className="absolute inset-0"
@@ -680,6 +845,17 @@ export default function RegistrationLanding() {
             {!selectedSelfiePreview && (
               <div className="text-sm text-slate-600">
                 Alinea tu rostro dentro del círculo y mantén la mirada al frente.
+              </div>
+            )}
+            {!selectedSelfiePreview && (
+              <div
+                className={`rounded-md border px-3 py-2 text-sm ${
+                  selfieQualityOk
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : 'border-amber-200 bg-amber-50 text-amber-700'
+                }`}
+              >
+                {selfieQualityMessage}
               </div>
             )}
             {selectedSelfiePreview && (
@@ -720,7 +896,7 @@ export default function RegistrationLanding() {
                 className="h-11 w-full text-base"
                 variant="outline"
                 onClick={captureSelfieFromCamera}
-                disabled={savingSelfie || locked || !cameraActive}
+                disabled={savingSelfie || locked || !cameraActive || !selfieQualityOk}
               >
                 <Camera className="h-4 w-4 mr-2" /> {selectedSelfiePreview ? 'Capturar de nuevo' : 'Capturar rostro'}
               </Button>

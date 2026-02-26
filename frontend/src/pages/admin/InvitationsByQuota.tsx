@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Copy, Link as LinkIcon, Mail, CheckCircle2, Eye, ChevronLeft, ChevronRight, Plus, RotateCcw, Pencil } from 'lucide-react';
+import { Copy, Link as LinkIcon, Mail, CheckCircle2, Eye, ChevronLeft, ChevronRight, Plus, RotateCcw, Pencil, Loader2 } from 'lucide-react';
 import { Box, Step, StepLabel, Stepper, useMediaQuery } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
@@ -1370,7 +1370,14 @@ export default function InvitationsByQuota() {
               Cancelar
             </Button>
             <Button onClick={submitRequestUpdate} disabled={reopenLoading}>
-              {reopenLoading ? 'Procesando...' : 'Habilitar'}
+              {reopenLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Procesando...
+                </>
+              ) : (
+                'Habilitar'
+              )}
             </Button>
           </div>
         </DialogContent>

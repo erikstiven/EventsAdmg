@@ -1,13 +1,17 @@
 import os
 import re
 import hashlib
+import json
 from pathlib import Path
 from typing import Dict
 
 from dependencies.auth import get_admin_user
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 from schemas.auth import UserResponse
+from core.database import get_db
+from models.security_audit_logs import Security_audit_logs
 from services.email_service import EmailService
 
 router = APIRouter(prefix="/api/v1/admin/settings", tags=["admin-settings"])
@@ -40,6 +44,51 @@ class EmailPreviewResponse(BaseModel):
     unresolved_variables: list[str]
     lengths: Dict[str, int]
     digests: Dict[str, str]
+
+
+SENSITIVE_SETTING_KEYS = {"SMTP_PASS", "JWT_SECRET_KEY", "OIDC_CLIENT_SECRET", "DATABASE_URL"}
+
+
+def _mask_value(key: str, value: str | None) -> str:
+    if value is None:
+        return ""
+    if key.upper() in SENSITIVE_SETTING_KEYS:
+        return "***"
+    return value
+
+
+async def _audit_setting_change(
+    *,
+    db: AsyncSession,
+    actor_user_id: str,
+    event_type: str,
+    key: str,
+    env_scope: str,
+    old_value: str | None,
+    new_value: str | None,
+) -> None:
+    try:
+        db.add(
+            Security_audit_logs(
+                actor_user_id=actor_user_id,
+                event_type=event_type,
+                target_type="SETTING",
+                target_id=key,
+                endpoint=f"/api/v1/admin/settings/{env_scope}/{key}",
+                method="PUT" if event_type == "SETTING_UPDATED" else ("POST" if event_type == "SETTING_ADDED" else "DELETE"),
+                details_json=json.dumps(
+                    {
+                        "scope": env_scope,
+                        "old_value": _mask_value(key, old_value),
+                        "new_value": _mask_value(key, new_value),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
 
 
 def validate_backend_setting(key: str, value: str) -> str:
@@ -234,15 +283,28 @@ async def render_email_preview(
 
 @router.put("/backend/{key}")
 async def update_backend_setting(
-    key: str, update: EnvVariableUpdate, current_user: UserResponse = Depends(get_admin_user)
+    key: str,
+    update: EnvVariableUpdate,
+    current_user: UserResponse = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Update a backend environment variable."""
     try:
         env_vars = read_env_file("backend")
+        old_value = env_vars.get(key)
         normalized_value = validate_backend_setting(key, update.value)
         env_vars[key] = normalized_value
         write_env_file("backend", env_vars)
         apply_backend_runtime_setting(key, normalized_value)
+        await _audit_setting_change(
+            db=db,
+            actor_user_id=str(current_user.id),
+            event_type="SETTING_UPDATED" if old_value is not None else "SETTING_ADDED",
+            key=key,
+            env_scope="backend",
+            old_value=old_value,
+            new_value=normalized_value,
+        )
         return {"message": f"Backend configuration '{key}' updated successfully."}
     except HTTPException:
         raise
@@ -252,13 +314,26 @@ async def update_backend_setting(
 
 @router.put("/frontend/{key}")
 async def update_frontend_setting(
-    key: str, update: EnvVariableUpdate, current_user: UserResponse = Depends(get_admin_user)
+    key: str,
+    update: EnvVariableUpdate,
+    current_user: UserResponse = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Update a frontend environment variable."""
     try:
         env_vars = read_env_file("frontend")
+        old_value = env_vars.get(key)
         env_vars[key] = update.value
         write_env_file("frontend", env_vars)
+        await _audit_setting_change(
+            db=db,
+            actor_user_id=str(current_user.id),
+            event_type="SETTING_UPDATED" if old_value is not None else "SETTING_ADDED",
+            key=key,
+            env_scope="frontend",
+            old_value=old_value,
+            new_value=update.value,
+        )
         return {"message": f"Frontend configuration '{key}' updated successfully; restart required to take effect."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update configuration: {str(e)}")
@@ -266,15 +341,28 @@ async def update_frontend_setting(
 
 @router.post("/backend/{key}")
 async def add_backend_setting(
-    key: str, update: EnvVariableUpdate, current_user: UserResponse = Depends(get_admin_user)
+    key: str,
+    update: EnvVariableUpdate,
+    current_user: UserResponse = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Add a backend environment variable."""
     try:
         env_vars = read_env_file("backend")
+        old_value = env_vars.get(key)
         normalized_value = validate_backend_setting(key, update.value)
         env_vars[key] = normalized_value
         write_env_file("backend", env_vars)
         apply_backend_runtime_setting(key, normalized_value)
+        await _audit_setting_change(
+            db=db,
+            actor_user_id=str(current_user.id),
+            event_type="SETTING_ADDED" if old_value is None else "SETTING_UPDATED",
+            key=key,
+            env_scope="backend",
+            old_value=old_value,
+            new_value=normalized_value,
+        )
         return {"message": f"Backend configuration '{key}' added successfully."}
     except HTTPException:
         raise
@@ -284,44 +372,89 @@ async def add_backend_setting(
 
 @router.post("/frontend/{key}")
 async def add_frontend_setting(
-    key: str, update: EnvVariableUpdate, current_user: UserResponse = Depends(get_admin_user)
+    key: str,
+    update: EnvVariableUpdate,
+    current_user: UserResponse = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Add a frontend environment variable."""
     try:
         env_vars = read_env_file("frontend")
+        old_value = env_vars.get(key)
         env_vars[key] = update.value
         write_env_file("frontend", env_vars)
+        await _audit_setting_change(
+            db=db,
+            actor_user_id=str(current_user.id),
+            event_type="SETTING_ADDED" if old_value is None else "SETTING_UPDATED",
+            key=key,
+            env_scope="frontend",
+            old_value=old_value,
+            new_value=update.value,
+        )
         return {"message": f"Frontend configuration '{key}' added successfully; restart required to take effect."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to add configuration: {str(e)}")
 
 
 @router.delete("/backend/{key}")
-async def delete_backend_setting(key: str, current_user: UserResponse = Depends(get_admin_user)):
+async def delete_backend_setting(
+    key: str,
+    current_user: UserResponse = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Delete a backend environment variable."""
     try:
         env_vars = read_env_file("backend")
         if key in env_vars:
+            old_value = env_vars.get(key)
             del env_vars[key]
             write_env_file("backend", env_vars)
             remove_backend_runtime_setting(key)
+            await _audit_setting_change(
+                db=db,
+                actor_user_id=str(current_user.id),
+                event_type="SETTING_DELETED",
+                key=key,
+                env_scope="backend",
+                old_value=old_value,
+                new_value=None,
+            )
             return {"message": f"Backend configuration '{key}' deleted successfully."}
         else:
             raise HTTPException(status_code=404, detail=f"Configuration item '{key}' does not exist")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete configuration: {str(e)}")
 
 
 @router.delete("/frontend/{key}")
-async def delete_frontend_setting(key: str, current_user: UserResponse = Depends(get_admin_user)):
+async def delete_frontend_setting(
+    key: str,
+    current_user: UserResponse = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Delete a frontend environment variable."""
     try:
         env_vars = read_env_file("frontend")
         if key in env_vars:
+            old_value = env_vars.get(key)
             del env_vars[key]
             write_env_file("frontend", env_vars)
+            await _audit_setting_change(
+                db=db,
+                actor_user_id=str(current_user.id),
+                event_type="SETTING_DELETED",
+                key=key,
+                env_scope="frontend",
+                old_value=old_value,
+                new_value=None,
+            )
             return {"message": f"Frontend configuration '{key}' deleted successfully; restart required to take effect."}
         else:
             raise HTTPException(status_code=404, detail=f"Configuration item '{key}' does not exist")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete configuration: {str(e)}")
