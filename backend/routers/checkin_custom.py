@@ -16,6 +16,7 @@ from services.invitations import InvitationsService
 from services.attendees import AttendeesService
 from services.events import EventsService
 from services.checkins import CheckinsService
+from services.checkin_flow import CheckinFlowService
 from services.biometric_validations import Biometric_validationsService
 from services.facial_biometrics import FacialBiometricsService
 from services.storage import StorageService
@@ -116,125 +117,9 @@ async def validate_qr_code(
 ):
     """Validate QR code token (STAFF only)"""
     try:
-        invitations_service = InvitationsService(db)
-        attendees_service = AttendeesService(db)
-        events_service = EventsService(db)
-
-        token = data.token.strip()
-        if "/" in token:
-            token = token.rstrip("/").split("/")[-1]
-        
-        # Find invitation by token_plain
-        invitation = await invitations_service.get_by_field("token_plain", token)
-        
-        if invitation:
-            # Validate status
-            if invitation.status != "APROBADO":
-                return ValidateQRResponse(
-                    valid=False,
-                    message=f"Invitación no aprobada. Estado actual: {invitation.status}"
-                )
-
-            # Check if already used
-            if invitation.status == "USADO" or invitation.used_at:
-                return ValidateQRResponse(
-                    valid=False,
-                    message="Esta invitación ya fue utilizada"
-                )
-
-            # Get attendee and event details
-            attendee = await attendees_service.get_by_id(invitation.attendee_id)
-            event = await events_service.get_by_id(invitation.event_id)
-
-            return ValidateQRResponse(
-                valid=True,
-                message="Token válido. Proceda con validación biométrica.",
-                invitation_id=invitation.id,
-                attendee_id=attendee.id if attendee else None,
-                attendee_name=attendee.full_name if attendee else None,
-                attendee_photo_url=attendee.face_photo_url if attendee else None,
-                event_name=event.name if event else None,
-                fingerprint_code=attendee.fingerprint_code if attendee else None,
-                id_document_url=attendee.id_document_url if attendee else None
-            )
-
-        # Try invitation groups QR tokens (titular or companion)
-        result = await db.execute(
-            select(Invitation_groups).where(
-                (Invitation_groups.titular_qr_token == token)
-            )
-        )
-        group = result.scalar_one_or_none()
-        role = None
-        person = None
-        if group:
-            role = "titular"
-        else:
-            comp_result = await db.execute(
-                select(Invitation_group_people).where(Invitation_group_people.qr_token == token)
-            )
-            comp_row = comp_result.scalar_one_or_none()
-            if comp_row:
-                grp_result = await db.execute(
-                    select(Invitation_groups).where(Invitation_groups.id == comp_row.invitation_group_id)
-                )
-                group = grp_result.scalar_one_or_none()
-                if group:
-                    role = "acompanante"
-                    person = {
-                        "name": comp_row.name,
-                        "codigo": comp_row.codigo,
-                        "selfie_url": comp_row.selfie_url,
-                        "doc_url": comp_row.doc_url,
-                        "approved": comp_row.approved,
-                    }
-
-        if not group:
-            return ValidateQRResponse(
-                valid=False,
-                message="Token inválido o no encontrado"
-            )
-
-        # Approval check
-        if role == "titular":
-            if not group.titular_approved:
-                return ValidateQRResponse(
-                    valid=False,
-                    message="Titular no aprobado. Estado actual: Pendiente aprobación"
-                )
-            person_name = group.titular_name
-            fingerprint_code = group.fingerprint_code
-            selfie_url = group.titular_selfie_url
-            doc_url = group.titular_doc_url
-        else:
-            if not person:
-                return ValidateQRResponse(
-                    valid=False,
-                    message="Invitado no encontrado"
-                )
-            if not person.get("approved"):
-                return ValidateQRResponse(
-                    valid=False,
-                    message="Invitado no aprobado. Estado actual: Pendiente aprobación"
-                )
-            person_name = person.get("name")
-            fingerprint_code = person.get("codigo")
-            selfie_url = person.get("selfie_url")
-            doc_url = person.get("doc_url")
-
-        event = await events_service.get_by_id(group.event_id)
-
-        return ValidateQRResponse(
-            valid=True,
-            message="Token válido. Proceda con validación biométrica.",
-            invitation_id=group.id,
-            attendee_id=None,
-            attendee_name=person_name,
-            attendee_photo_url=selfie_url,
-            event_name=event.name if event else None,
-            fingerprint_code=fingerprint_code,
-            id_document_url=doc_url,
-        )
+        flow_service = CheckinFlowService(db)
+        result = await flow_service.validate_qr(data.token)
+        return ValidateQRResponse(**result)
     except Exception as e:
         logger.error(f"Error validating QR: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -250,157 +135,14 @@ async def qr_checkin(
 ):
     """QR-only check-in: validates and consumes QR token to prevent reuse."""
     try:
-        invitations_service = InvitationsService(db)
-        events_service = EventsService(db)
-        checkins_service = CheckinsService(db)
-
-        token = data.token.strip()
-        if "/" in token:
-            token = token.rstrip("/").split("/")[-1]
-
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # 1) Classic invitation token
-        invitation = await invitations_service.get_by_field("token_plain", token)
-        if invitation:
-            if invitation.status != "APROBADO":
-                return QRCheckInResponse(
-                    success=False,
-                    message=f"Invitación no aprobada. Estado actual: {invitation.status}",
-                )
-            if invitation.status == "USADO" or invitation.used_at:
-                return QRCheckInResponse(
-                    success=False,
-                    message="Esta invitación ya fue utilizada",
-                )
-
-            attendee = await AttendeesService(db).get_by_id(invitation.attendee_id)
-            event = await events_service.get_by_id(invitation.event_id)
-
-            checkin_data = {
-                "invitation_id": invitation.id,
-                "event_id": invitation.event_id,
-                "attendee_id": invitation.attendee_id,
-                "participant_role": "attendee",
-                "staff_user_id": current_user.id,
-                "gate": data.gate,
-                "biometric_validated": False,
-                "validation_method": "QR",
-                "validation_notes": f"QR token used: {token}",
-                "qr_token_used": token,
-                "checked_in_at": now_str,
-                "created_at": now_str,
-            }
-            checkin = await checkins_service.create(checkin_data, invitation.user_id)
-
-            await invitations_service.mark_used(
-                invitation.id,
-                changed_by=str(current_user.id),
-                user_id=invitation.user_id,
-                reason="qr_checkin",
-                endpoint=str(request.url.path),
-                request_id=request.headers.get("x-request-id"),
-            )
-            return QRCheckInResponse(
-                success=True,
-                message="✅ Acceso permitido. QR registrado y marcado como usado.",
-                checkin_id=checkin.id,
-                attendee_name=attendee.full_name if attendee else None,
-                event_name=event.name if event else None,
-            )
-
-        # 2) Group titular token
-        grp_result = await db.execute(
-            select(Invitation_groups).where(Invitation_groups.titular_qr_token == token)
+        flow_service = CheckinFlowService(db)
+        result = await flow_service.qr_checkin(
+            request=request,
+            raw_token=data.token,
+            gate=data.gate or "Main Gate",
+            current_user_id=str(current_user.id),
         )
-        group = grp_result.scalar_one_or_none()
-        if group:
-            if not group.titular_approved:
-                return QRCheckInResponse(
-                    success=False,
-                    message="Titular no aprobado. Acceso denegado.",
-                )
-
-            event = await events_service.get_by_id(group.event_id)
-            checkin_data = {
-                "invitation_id": group.id,
-                "event_id": group.event_id,
-                "participant_role": "titular",
-                "staff_user_id": current_user.id,
-                "gate": data.gate,
-                "biometric_validated": False,
-                "validation_method": "QR_GROUP",
-                "validation_notes": f"QR group titular used: {token}",
-                "qr_token_used": token,
-                "checked_in_at": now_str,
-                "created_at": now_str,
-            }
-            checkin = await checkins_service.create(checkin_data, group.created_by)
-
-            group.titular_qr_token = None
-            group.updated_at = datetime.now()
-            await db.commit()
-
-            return QRCheckInResponse(
-                success=True,
-                message="✅ Acceso permitido. QR de titular consumido.",
-                checkin_id=checkin.id,
-                attendee_name=group.titular_name,
-                event_name=event.name if event else None,
-            )
-
-        # 3) Group companion token
-        comp_result = await db.execute(
-            select(Invitation_group_people).where(Invitation_group_people.qr_token == token)
-        )
-        companion = comp_result.scalar_one_or_none()
-        if companion:
-            if not companion.approved:
-                return QRCheckInResponse(
-                    success=False,
-                    message="Invitado no aprobado. Acceso denegado.",
-                )
-
-            group_result = await db.execute(
-                select(Invitation_groups).where(Invitation_groups.id == companion.invitation_group_id)
-            )
-            group = group_result.scalar_one_or_none()
-            if not group:
-                return QRCheckInResponse(success=False, message="Grupo no encontrado para este QR.")
-
-            event = await events_service.get_by_id(group.event_id)
-            checkin_data = {
-                "invitation_id": group.id,
-                "event_id": group.event_id,
-                "invitation_group_person_id": companion.id,
-                "participant_role": "acompanante",
-                "staff_user_id": current_user.id,
-                "gate": data.gate,
-                "biometric_validated": False,
-                "validation_method": "QR_GROUP",
-                "validation_notes": f"QR group companion[{companion.person_index}] used: {token}",
-                "qr_token_used": token,
-                "checked_in_at": now_str,
-                "created_at": now_str,
-            }
-            checkin = await checkins_service.create(checkin_data, group.created_by)
-
-            companion.qr_token = None
-            companion.updated_at = datetime.now()
-            await db.commit()
-
-            return QRCheckInResponse(
-                success=True,
-                message="✅ Acceso permitido. QR de acompañante consumido.",
-                checkin_id=checkin.id,
-                attendee_name=companion.name,
-                event_name=event.name if event else None,
-            )
-
-        return QRCheckInResponse(
-            success=False,
-            message="Token inválido o no encontrado.",
-        )
+        return QRCheckInResponse(**result)
     except Exception as e:
         logger.error(f"Error in QR check-in: {e}")
         raise HTTPException(status_code=500, detail=str(e))

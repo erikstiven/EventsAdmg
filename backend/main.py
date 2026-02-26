@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 from core.config import settings
+from middlewares import RequestLoggingMiddleware
 from routers import load_routers
 from services.database import initialize_database
 
@@ -79,6 +80,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(RequestLoggingMiddleware)
 
 # Serve static files from the 'uploads' directory
 from fastapi.staticfiles import StaticFiles

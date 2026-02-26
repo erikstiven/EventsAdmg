@@ -1,4 +1,3 @@
-import hashlib
 import base64
 import hashlib
 import json
@@ -13,7 +12,7 @@ from typing import Any, Dict, Optional
 import qrcode
 from fastapi import HTTPException
 from fastapi.concurrency import run_in_threadpool
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.events import Events
@@ -1331,6 +1330,35 @@ class InvitationGroupsService:
             logger.error(f"Error fetching invitation groups list: {str(e)}")
             raise
 
+    async def get_pending_approvals_list(self, limit: int = 2000) -> list[Invitation_groups]:
+        """List only approval-actionable invitation groups."""
+        actionable_labels = [
+            "Pendiente aprobación",
+            "Pendiente de actualización",
+            "Aprobado parcial",
+        ]
+        actionable_status_ids = [
+            invitation_group_status_id_from_label(label, default=label)
+            for label in actionable_labels
+        ]
+        actionable_legacy = [label.lower() for label in actionable_labels] + [
+            "pendiente aprobacion",
+            "pendiente de actualizacion",
+        ]
+        query = (
+            select(Invitation_groups)
+            .where(
+                or_(
+                    Invitation_groups.status_id.in_(actionable_status_ids),
+                    func.lower(Invitation_groups.status).in_(actionable_legacy),
+                )
+            )
+            .order_by(Invitation_groups.id.desc())
+            .limit(limit)
+        )
+        result = await self.db.execute(query)
+        return result.scalars().all()
+
     async def get_by_token(self, token_plain: str) -> Optional[Invitation_groups]:
         result = await self.db.execute(
             select(Invitation_groups).where(Invitation_groups.token_plain == token_plain)
@@ -1450,6 +1478,45 @@ class InvitationGroupsService:
             for row in rows
         ]
 
+    async def get_companions_payload_map(self, invitation_group_ids: list[int]) -> dict[int, list[dict]]:
+        if not invitation_group_ids:
+            return {}
+        result = await self.db.execute(
+            select(Invitation_group_people)
+            .where(Invitation_group_people.invitation_group_id.in_(invitation_group_ids))
+            .order_by(
+                Invitation_group_people.invitation_group_id.asc(),
+                Invitation_group_people.person_index.asc(),
+            )
+        )
+        rows = result.scalars().all()
+        grouped: dict[int, list[dict]] = {group_id: [] for group_id in invitation_group_ids}
+        for row in rows:
+            grouped.setdefault(row.invitation_group_id, []).append(
+                {
+                    "name": row.name or "",
+                    "cedula": row.cedula or "",
+                    "email": row.email or "",
+                    "telefono": row.telefono or "",
+                    "codigo": row.codigo or "",
+                    "selfie_url": row.selfie_url,
+                    "doc_url": row.doc_url,
+                    "approved": row.approved,
+                    "rejection_reason": row.rejection_reason,
+                    "qr_token": row.qr_token,
+                    "qr_sent_at": row.qr_sent_at.isoformat() if row.qr_sent_at else None,
+                }
+            )
+        return grouped
+
+    async def get_event_names_map(self, event_ids: list[int]) -> dict[int, str]:
+        if not event_ids:
+            return {}
+        unique_ids = sorted(set(event_ids))
+        result = await self.db.execute(select(Events).where(Events.id.in_(unique_ids)))
+        events = result.scalars().all()
+        return {event.id: event.name for event in events if getattr(event, "name", None)}
+
     async def _replace_companions(self, invitation_group_id: int, companions: list[dict]) -> None:
         await self.db.execute(
             delete(Invitation_group_people).where(
@@ -1509,24 +1576,39 @@ class InvitationGroupsService:
         group_ids = self._extract_group_ids(normalized_titular, companions)
         if len(group_ids) != len(set(group_ids)):
             raise ValueError("La cédula no puede repetirse dentro del mismo grupo.")
+        group_ids_set = set(group_ids)
 
-        result = await self.db.execute(
-            select(Invitation_groups).where(Invitation_groups.event_id == event_id)
-        )
-        existing = result.scalars().all()
-        for item in existing:
-            if ignore_invitation_id and item.id == ignore_invitation_id:
-                continue
-            existing_ids: list[str] = []
-            if item.titular_identification:
-                existing_ids.append(self._normalize_id(item.titular_identification))
-            comp_rows = await self.get_companions_payload(item.id)
-            for comp in comp_rows:
-                comp_id = self._normalize_id(comp.get("cedula"))
-                if comp_id:
-                    existing_ids.append(comp_id)
-            if set(group_ids) & set(existing_ids):
-                raise ValueError("La cédula ya está registrada en este evento.")
+        groups_query = select(
+            Invitation_groups.id,
+            Invitation_groups.titular_identification,
+        ).where(Invitation_groups.event_id == event_id)
+        if ignore_invitation_id:
+            groups_query = groups_query.where(Invitation_groups.id != ignore_invitation_id)
+        groups_rows = (await self.db.execute(groups_query)).all()
+
+        existing_ids: set[str] = set()
+        group_ids_for_companions: list[int] = []
+        for row in groups_rows:
+            group_ids_for_companions.append(row.id)
+            normalized = self._normalize_id(row.titular_identification)
+            if normalized:
+                existing_ids.add(normalized)
+
+        if group_ids_for_companions:
+            companion_rows = (
+                await self.db.execute(
+                    select(Invitation_group_people.cedula).where(
+                        Invitation_group_people.invitation_group_id.in_(group_ids_for_companions)
+                    )
+                )
+            ).all()
+            for row in companion_rows:
+                normalized = self._normalize_id(row.cedula)
+                if normalized:
+                    existing_ids.add(normalized)
+
+        if group_ids_set & existing_ids:
+            raise ValueError("La cédula ya está registrada en este evento.")
 
     async def upload_media_by_token(
         self,

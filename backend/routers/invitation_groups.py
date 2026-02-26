@@ -16,6 +16,10 @@ from dependencies.auth import get_current_user
 from dependencies.permissions import require_any_permission
 from schemas.auth import UserResponse
 from services.invitation_groups import InvitationGroupsService
+from services.invitation_groups_presenter import (
+    serialize_invitation_group,
+    serialize_public_invitation_group,
+)
 from models.events import Events
 from models.invitation_group_statuses import (
     invitation_group_status_label_from_id,
@@ -222,51 +226,6 @@ class InvitationGroupStatusHistoryListResponse(BaseModel):
     limit: int
 
 
-async def _serialize_invitation_group(item, service: InvitationGroupsService) -> dict:
-    companions = await service.get_companions_payload(item.id)
-    event_name = f"Evento {item.event_id}"
-    try:
-        result = await service.db.execute(select(Events).where(Events.id == item.event_id))
-        event = result.scalar_one_or_none()
-        if event and getattr(event, "name", None):
-            event_name = event.name
-    except Exception:
-        pass
-    status_label = invitation_group_status_label_from_id(
-        getattr(item, "status_id", None),
-        default=normalize_invitation_group_status(getattr(item, "status", None), default="Pendiente completar"),
-    )
-    return {
-        "id": item.id,
-        "event_id": item.event_id,
-        "event_name": event_name,
-        "titular_name": item.titular_name,
-        "titular_identification": item.titular_identification,
-        "fingerprint_code": item.fingerprint_code,
-        "email": item.email,
-        "phone": item.phone,
-        "group_size": item.group_size,
-        "send_email": item.send_email,
-        "send_email_cc": item.send_email_cc,
-        "intransferible": item.intransferible,
-        "status_id": item.status_id,
-        "status": status_label,
-        "rejection_reason": getattr(item, "rejection_reason", None),
-        "token_plain": item.token_plain,
-        "link": item.link,
-        "companions": companions or None,
-        "titular_selfie_url": item.titular_selfie_url,
-        "titular_doc_url": item.titular_doc_url,
-        "titular_approved": getattr(item, "titular_approved", None),
-        "titular_rejection_reason": getattr(item, "titular_rejection_reason", None),
-        "titular_qr_token": getattr(item, "titular_qr_token", None),
-        "email_sent_at": item.email_sent_at,
-        "created_by": item.created_by,
-        "created_at": item.created_at,
-        "updated_at": item.updated_at,
-    }
-
-
 @router.post("", response_model=InvitationGroupResponse, status_code=201)
 async def create_invitation_group(
     request: Request,
@@ -287,7 +246,7 @@ async def create_invitation_group(
         )
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create invitation group")
-        return await _serialize_invitation_group(result, service)
+        return await serialize_invitation_group(result, service)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -316,7 +275,7 @@ async def update_invitation_group(
         raise HTTPException(status_code=400, detail=str(e))
     if not result:
         raise HTTPException(status_code=404, detail="Invitation group not found")
-    return await _serialize_invitation_group(result, service)
+    return await serialize_invitation_group(result, service)
 
 
 @router.get("", response_model=InvitationGroupListResponse)
@@ -330,7 +289,20 @@ async def list_invitation_groups(
     """List invitation groups"""
     service = InvitationGroupsService(db)
     result = await service.get_list(skip=skip, limit=limit)
-    items = [await _serialize_invitation_group(item, service) for item in result["items"]]
+    base_items = result["items"]
+    group_ids = [item.id for item in base_items]
+    event_ids = [item.event_id for item in base_items]
+    companions_map = await service.get_companions_payload_map(group_ids)
+    event_names_map = await service.get_event_names_map(event_ids)
+    items = [
+        await serialize_invitation_group(
+            item,
+            service,
+            event_name=event_names_map.get(item.event_id, f"Evento {item.event_id}"),
+            companions=companions_map.get(item.id, []),
+        )
+        for item in base_items
+    ]
     return {
         "items": items,
         "total": result["total"],
@@ -347,25 +319,19 @@ async def get_pending_approvals(
 ):
     """List invitation groups pending approval."""
     service = InvitationGroupsService(db)
-    result = await service.get_list(skip=0, limit=2000)
-    items = result.get("items", [])
+    items = await service.get_pending_approvals_list(limit=2000)
+    companions_map = await service.get_companions_payload_map([item.id for item in items])
+    event_names_map = await service.get_event_names_map([item.event_id for item in items])
     pending = []
     for item in items:
-        status_label = invitation_group_status_label_from_id(
-            getattr(item, "status_id", None),
-            default=normalize_invitation_group_status(getattr(item, "status", None), default="Pendiente completar"),
+        pending.append(
+            await serialize_invitation_group(
+                item,
+                service,
+                event_name=event_names_map.get(item.event_id, f"Evento {item.event_id}"),
+                companions=companions_map.get(item.id, []),
+            )
         )
-        status_value = status_label.lower().replace("_", " ").strip()
-        # Approver queue should include only actionable states for reviewer decisions.
-        if status_value not in {
-            "pendiente aprobación",
-            "pendiente aprobacion",
-            "pendiente de actualización",
-            "pendiente de actualizacion",
-            "aprobado parcial",
-        }:
-            continue
-        pending.append(await _serialize_invitation_group(item, service))
     return pending
 
 
@@ -426,7 +392,7 @@ async def request_update_invitation_group(
         raise HTTPException(status_code=400, detail=str(e))
     if not result:
         raise HTTPException(status_code=404, detail="Invitation group not found")
-    return await _serialize_invitation_group(result, service)
+    return await serialize_invitation_group(result, service)
 
 
 @router.get("/{invitation_id}/status-history", response_model=List[InvitationGroupStatusHistoryResponse])
@@ -547,35 +513,7 @@ async def get_public_invitation_group(token: str, db: AsyncSession = Depends(get
     if not obj:
         raise HTTPException(status_code=404, detail="Token inválido o expirado")
 
-    event_name = f"Evento {obj.event_id}"
-    try:
-        result = await db.execute(select(Events).where(Events.id == obj.event_id))
-        event = result.scalar_one_or_none()
-        if event and event.name:
-            event_name = event.name
-    except Exception:
-        pass
-
-    companions = await service.get_companions_payload(obj.id)
-
-    return {
-        "event_id": obj.event_id,
-        "event_name": event_name,
-        "titular_name": obj.titular_name,
-        "titular_identification": obj.titular_identification,
-        "email": obj.email,
-        "phone": obj.phone,
-        "fingerprint_code": obj.fingerprint_code,
-        "titular_selfie_url": obj.titular_selfie_url,
-        "titular_doc_url": obj.titular_doc_url,
-        "group_size": obj.group_size,
-        "status_id": obj.status_id,
-        "status": invitation_group_status_label_from_id(
-            getattr(obj, "status_id", None),
-            default=normalize_invitation_group_status(getattr(obj, "status", None), default="Pendiente completar"),
-        ),
-        "companions": companions or None,
-    }
+    return await serialize_public_invitation_group(obj, service)
 
 
 @router.post("/public/{token}/register", response_model=PublicInvitationGroupResponse)
@@ -592,35 +530,7 @@ async def register_public_invitation_group(
     if not obj:
         raise HTTPException(status_code=404, detail="Token inválido o expirado")
 
-    event_name = f"Evento {obj.event_id}"
-    try:
-        result = await db.execute(select(Events).where(Events.id == obj.event_id))
-        event = result.scalar_one_or_none()
-        if event and event.name:
-            event_name = event.name
-    except Exception:
-        pass
-
-    companions = await service.get_companions_payload(obj.id)
-
-    return {
-        "event_id": obj.event_id,
-        "event_name": event_name,
-        "titular_name": obj.titular_name,
-        "titular_identification": obj.titular_identification,
-        "email": obj.email,
-        "phone": obj.phone,
-        "fingerprint_code": obj.fingerprint_code,
-        "titular_selfie_url": obj.titular_selfie_url,
-        "titular_doc_url": obj.titular_doc_url,
-        "group_size": obj.group_size,
-        "status_id": obj.status_id,
-        "status": invitation_group_status_label_from_id(
-            getattr(obj, "status_id", None),
-            default=normalize_invitation_group_status(getattr(obj, "status", None), default="Pendiente completar"),
-        ),
-        "companions": companions or None,
-    }
+    return await serialize_public_invitation_group(obj, service)
 
 
 @router.post("/public/{token}/upload", response_model=PublicInvitationGroupResponse)
@@ -648,35 +558,7 @@ async def upload_public_media(
     if not obj:
         raise HTTPException(status_code=404, detail="Token inválido o expirado")
 
-    event_name = f"Evento {obj.event_id}"
-    try:
-        result = await db.execute(select(Events).where(Events.id == obj.event_id))
-        event = result.scalar_one_or_none()
-        if event and event.name:
-            event_name = event.name
-    except Exception:
-        pass
-
-    companions = await service.get_companions_payload(obj.id)
-
-    return {
-        "event_id": obj.event_id,
-        "event_name": event_name,
-        "titular_name": obj.titular_name,
-        "titular_identification": obj.titular_identification,
-        "email": obj.email,
-        "phone": obj.phone,
-        "fingerprint_code": obj.fingerprint_code,
-        "titular_selfie_url": obj.titular_selfie_url,
-        "titular_doc_url": obj.titular_doc_url,
-        "group_size": obj.group_size,
-        "status_id": obj.status_id,
-        "status": invitation_group_status_label_from_id(
-            getattr(obj, "status_id", None),
-            default=normalize_invitation_group_status(getattr(obj, "status", None), default="Pendiente completar"),
-        ),
-        "companions": companions or None,
-    }
+    return await serialize_public_invitation_group(obj, service)
 
 
 @router.post("/{invitation_id}/resend", response_model=InvitationGroupResponse)
@@ -691,4 +573,4 @@ async def resend_invitation_email(
     result = await service.resend_email(invitation_id)
     if not result:
         raise HTTPException(status_code=404, detail="Invitation group not found")
-    return await _serialize_invitation_group(result, service)
+    return await serialize_invitation_group(result, service)

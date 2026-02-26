@@ -9,7 +9,9 @@ from logging.config import fileConfig
 
 import models
 from alembic import context
+from core.config import settings
 from core.database import Base
+from sqlalchemy.engine import make_url
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -25,6 +27,30 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def _resolve_database_url() -> str:
+    configured = (config.get_main_option("sqlalchemy.url") or "").strip().strip('"').strip("'")
+    raw_url = configured or (settings.database_url or "").strip()
+    if not raw_url:
+        raise RuntimeError("No database URL configured for Alembic migrations.")
+
+    # Ensure async driver for Alembic async engine.
+    try:
+        url = make_url(raw_url)
+        drivername = url.drivername or ""
+        if drivername == "sqlite":
+            return str(url.set(drivername="sqlite+aiosqlite"))
+        if drivername in ("postgresql", "postgres"):
+            return str(url.set(drivername="postgresql+asyncpg"))
+        if drivername == "mysql":
+            return str(url.set(drivername="mysql+aiomysql"))
+        if drivername == "mariadb":
+            return str(url.set(drivername="mariadb+aiomysql"))
+    except Exception:
+        # Fallback to raw URL; engine creation will raise detailed error if invalid.
+        return raw_url
+    return raw_url
+
+
 def alembic_include_object(object, name, type_, reflected, compare_to):
     # type_ can be 'table', 'index', 'column', 'constraint'
     # ignore particular table_name
@@ -34,7 +60,7 @@ def alembic_include_object(object, name, type_, reflected, compare_to):
 
 
 async def run_migrations_online():
-    connectable = create_async_engine(config.get_main_option("sqlalchemy.url"), poolclass=pool.NullPool)
+    connectable = create_async_engine(_resolve_database_url(), poolclass=pool.NullPool)
     async with connectable.connect() as connection:
         await connection.run_sync(
             lambda sync_conn: context.configure(

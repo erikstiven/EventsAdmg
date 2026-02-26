@@ -2,10 +2,11 @@ import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.events import Events
+from repositories.events_repository import EventsRepository
 
 logger = logging.getLogger(__name__)
 
@@ -16,14 +17,12 @@ class EventsService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.repo = EventsRepository(db)
 
     async def create(self, data: Dict[str, Any]) -> Optional[Events]:
         """Create a new events"""
         try:
-            obj = Events(**data)
-            self.db.add(obj)
-            await self.db.commit()
-            await self.db.refresh(obj)
+            obj = await self.repo.create(data)
             logger.info(f"Created events with id: {obj.id}")
             return obj
         except Exception as e:
@@ -34,9 +33,7 @@ class EventsService:
     async def get_by_id(self, obj_id: int) -> Optional[Events]:
         """Get events by ID"""
         try:
-            query = select(Events).where(Events.id == obj_id)
-            result = await self.db.execute(query)
-            return result.scalar_one_or_none()
+            return await self.repo.get_by_id(obj_id)
         except Exception as e:
             logger.error(f"Error fetching events {obj_id}: {str(e)}")
             raise
@@ -54,59 +51,16 @@ class EventsService:
     ) -> Dict[str, Any]:
         """Get paginated list of events with filters"""
         try:
-            query = select(Events)
-            count_query = select(func.count(Events.id))
-            
-            if query_dict:
-                for field, value in query_dict.items():
-                    if hasattr(Events, field):
-                        query = query.where(getattr(Events, field) == value)
-                        count_query = count_query.where(getattr(Events, field) == value)
-
-            if search:
-                term = f"%{search.strip()}%"
-                query = query.where(
-                    (Events.name.ilike(term)) | (Events.location.ilike(term))
-                )
-                count_query = count_query.where(
-                    (Events.name.ilike(term)) | (Events.location.ilike(term))
-                )
-
-            if status:
-                query = query.where(Events.status == status)
-                count_query = count_query.where(Events.status == status)
-
-            if date_from:
-                query = query.where(Events.event_date >= date_from)
-                count_query = count_query.where(Events.event_date >= date_from)
-
-            if date_to:
-                query = query.where(Events.event_date <= date_to)
-                count_query = count_query.where(Events.event_date <= date_to)
-            
-            count_result = await self.db.execute(count_query)
-            total = count_result.scalar()
-
-            if sort:
-                if sort.startswith('-'):
-                    field_name = sort[1:]
-                    if hasattr(Events, field_name):
-                        query = query.order_by(getattr(Events, field_name).desc())
-                else:
-                    if hasattr(Events, sort):
-                        query = query.order_by(getattr(Events, sort))
-            else:
-                query = query.order_by(Events.id.desc())
-
-            result = await self.db.execute(query.offset(skip).limit(limit))
-            items = result.scalars().all()
-
-            return {
-                "items": items,
-                "total": total,
-                "skip": skip,
-                "limit": limit,
-            }
+            return await self.repo.get_list(
+                skip=skip,
+                limit=limit,
+                query_dict=query_dict,
+                sort=sort,
+                search=search,
+                date_from=date_from,
+                date_to=date_to,
+                status=status,
+            )
         except Exception as e:
             logger.error(f"Error fetching events list: {str(e)}")
             raise
@@ -118,12 +72,7 @@ class EventsService:
             if not obj:
                 logger.warning(f"Events {obj_id} not found for update")
                 return None
-            for key, value in update_data.items():
-                if hasattr(obj, key):
-                    setattr(obj, key, value)
-
-            await self.db.commit()
-            await self.db.refresh(obj)
+            obj = await self.repo.update(obj, update_data)
             logger.info(f"Updated events {obj_id}")
             return obj
         except Exception as e:
@@ -138,8 +87,7 @@ class EventsService:
             if not obj:
                 logger.warning(f"Events {obj_id} not found for deletion")
                 return False
-            await self.db.delete(obj)
-            await self.db.commit()
+            await self.repo.delete(obj)
             logger.info(f"Deleted events {obj_id}")
             return True
         except Exception as e:
@@ -152,10 +100,7 @@ class EventsService:
         try:
             if not hasattr(Events, field_name):
                 raise ValueError(f"Field {field_name} does not exist on Events")
-            result = await self.db.execute(
-                select(Events).where(getattr(Events, field_name) == field_value)
-            )
-            return result.scalar_one_or_none()
+            return await self.repo.get_by_field(field_name, field_value)
         except Exception as e:
             logger.error(f"Error fetching events by {field_name}: {str(e)}")
             raise

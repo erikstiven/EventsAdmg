@@ -14,6 +14,10 @@ from dependencies.permissions import require_any_permission
 from services.invitations import InvitationsService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
+from utils.http_errors import (
+    raise_bad_request_from_value_error,
+    raise_internal_server_error,
+)
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -150,8 +154,7 @@ async def query_invitationss(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error querying invitationss: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, "Error querying invitationss", e)
 
 
 @router.get("/all", response_model=InvitationsListResponse)
@@ -189,8 +192,7 @@ async def query_invitationss_all(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error querying invitationss: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, "Error querying invitationss", e)
 
 
 @router.get("/{id}", response_model=InvitationsResponse)
@@ -215,8 +217,7 @@ async def get_invitations(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching invitations {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, f"Error fetching invitations {id}", e)
 
 
 @router.post("", response_model=InvitationsResponse, status_code=201)
@@ -239,11 +240,9 @@ async def create_invitations(
         logger.info(f"Invitations created successfully with id: {result.id}")
         return result
     except ValueError as e:
-        logger.error(f"Validation error creating invitations: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise_bad_request_from_value_error(e)
     except Exception as e:
-        logger.error(f"Error creating invitations: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, "Error creating invitations", e)
 
 
 @router.post("/batch", response_model=List[InvitationsResponse], status_code=201)
@@ -270,8 +269,7 @@ async def create_invitationss_batch(
         return results
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
+        raise_internal_server_error(logger, "Error in batch create", e)
 
 
 @router.put("/batch", response_model=List[InvitationsResponse])
@@ -302,8 +300,7 @@ async def update_invitationss_batch(
         raise
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
+        raise_internal_server_error(logger, "Error in batch update", e)
 
 
 @router.put("/{id}", response_model=InvitationsResponse)
@@ -332,11 +329,9 @@ async def update_invitations(
     except HTTPException:
         raise
     except ValueError as e:
-        logger.error(f"Validation error updating invitations {id}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise_bad_request_from_value_error(e)
     except Exception as e:
-        logger.error(f"Error updating invitations {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, f"Error updating invitations {id}", e)
 
 
 @router.delete("/batch")
@@ -381,8 +376,7 @@ async def delete_invitationss_batch(
         raise
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
+        raise_internal_server_error(logger, "Error in batch delete", e)
 
 
 @router.delete("/{id}")
@@ -414,5 +408,4 @@ async def delete_invitations(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting invitations {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, f"Error deleting invitations {id}", e)

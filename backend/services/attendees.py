@@ -1,11 +1,12 @@
 import logging
 from typing import Optional, Dict, Any, List
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.attendees import Attendees
+from repositories.attendees_repository import AttendeesRepository
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +17,14 @@ class AttendeesService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.repo = AttendeesRepository(db)
 
     async def create(self, data: Dict[str, Any], user_id: Optional[str] = None) -> Optional[Attendees]:
         """Create a new attendees"""
         try:
             if user_id:
                 data['user_id'] = user_id
-            obj = Attendees(**data)
-            self.db.add(obj)
-            await self.db.commit()
-            await self.db.refresh(obj)
+            obj = await self.repo.create(data)
             logger.info(f"Created attendees with id: {obj.id}")
             return obj
         except Exception as e:
@@ -45,11 +44,7 @@ class AttendeesService:
     async def get_by_id(self, obj_id: int, user_id: Optional[str] = None) -> Optional[Attendees]:
         """Get attendees by ID (user can only see their own records)"""
         try:
-            query = select(Attendees).where(Attendees.id == obj_id)
-            if user_id:
-                query = query.where(Attendees.user_id == user_id)
-            result = await self.db.execute(query)
-            return result.scalar_one_or_none()
+            return await self.repo.get_by_id(obj_id, user_id=user_id)
         except Exception as e:
             logger.error(f"Error fetching attendees {obj_id}: {str(e)}")
             raise
@@ -64,42 +59,13 @@ class AttendeesService:
     ) -> Dict[str, Any]:
         """Get paginated list of attendeess (user can only see their own records)"""
         try:
-            query = select(Attendees)
-            count_query = select(func.count(Attendees.id))
-            
-            if user_id:
-                query = query.where(Attendees.user_id == user_id)
-                count_query = count_query.where(Attendees.user_id == user_id)
-            
-            if query_dict:
-                for field, value in query_dict.items():
-                    if hasattr(Attendees, field):
-                        query = query.where(getattr(Attendees, field) == value)
-                        count_query = count_query.where(getattr(Attendees, field) == value)
-            
-            count_result = await self.db.execute(count_query)
-            total = count_result.scalar()
-
-            if sort:
-                if sort.startswith('-'):
-                    field_name = sort[1:]
-                    if hasattr(Attendees, field_name):
-                        query = query.order_by(getattr(Attendees, field_name).desc())
-                else:
-                    if hasattr(Attendees, sort):
-                        query = query.order_by(getattr(Attendees, sort))
-            else:
-                query = query.order_by(Attendees.id.desc())
-
-            result = await self.db.execute(query.offset(skip).limit(limit))
-            items = result.scalars().all()
-
-            return {
-                "items": items,
-                "total": total,
-                "skip": skip,
-                "limit": limit,
-            }
+            return await self.repo.get_list(
+                skip=skip,
+                limit=limit,
+                user_id=user_id,
+                query_dict=query_dict,
+                sort=sort,
+            )
         except Exception as e:
             logger.error(f"Error fetching attendees list: {str(e)}")
             raise
@@ -111,12 +77,7 @@ class AttendeesService:
             if not obj:
                 logger.warning(f"Attendees {obj_id} not found for update")
                 return None
-            for key, value in update_data.items():
-                if hasattr(obj, key) and key != 'user_id':
-                    setattr(obj, key, value)
-
-            await self.db.commit()
-            await self.db.refresh(obj)
+            obj = await self.repo.update(obj, update_data)
             logger.info(f"Updated attendees {obj_id}")
             return obj
         except Exception as e:
@@ -131,8 +92,7 @@ class AttendeesService:
             if not obj:
                 logger.warning(f"Attendees {obj_id} not found for deletion")
                 return False
-            await self.db.delete(obj)
-            await self.db.commit()
+            await self.repo.delete(obj)
             logger.info(f"Deleted attendees {obj_id}")
             return True
         except Exception as e:
@@ -145,19 +105,9 @@ class AttendeesService:
         try:
             if not hasattr(Attendees, field_name):
                 raise ValueError(f"Field {field_name} does not exist on Attendees")
-            result = await self.db.execute(
-                select(Attendees)
-                .where(getattr(Attendees, field_name) == field_value)
-                .order_by(Attendees.id.desc())
-            )
-            return result.scalars().first()
+            return await self.repo.get_by_field(field_name, field_value)
         except MultipleResultsFound:
-            result = await self.db.execute(
-                select(Attendees)
-                .where(getattr(Attendees, field_name) == field_value)
-                .order_by(Attendees.id.desc())
-            )
-            return result.scalars().first()
+            return await self.repo.get_by_field(field_name, field_value)
         except Exception as e:
             logger.error(f"Error fetching attendees by {field_name}: {str(e)}")
             raise

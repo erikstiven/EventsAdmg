@@ -1,6 +1,20 @@
 import { authSimple } from './auth-simple';
 import { config } from './config';
 
+export class ApiError extends Error {
+  data?: unknown;
+
+  constructor(message: string, data?: unknown) {
+    super(message);
+    this.name = 'ApiError';
+    this.data = data;
+  }
+}
+
+const throwApiError = (message: string, data?: unknown): never => {
+  throw new ApiError(message, data);
+};
+
 export interface Event {
   id: number;
   name: string;
@@ -168,7 +182,7 @@ export const api = {
       });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al crear evento' };
+        throwApiError('Error al crear evento', errData);
       }
       return await res.json();
     },
@@ -200,7 +214,7 @@ export const api = {
       const res = await authSimple.fetch(`/api/v1/entities/attendees/lookup?cedula=${encodeURIComponent(cedula)}`);
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al buscar asistente' };
+        throwApiError('Error al buscar asistente', errData);
       }
       return await res.json();
     },
@@ -218,7 +232,7 @@ export const api = {
       });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al registrar asistente' };
+        throwApiError('Error al registrar asistente', errData);
       }
       return await res.json();
     },
@@ -254,7 +268,7 @@ export const api = {
       });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al generar invitación' };
+        throwApiError('Error al generar invitación', errData);
       }
       return await res.json();
     },
@@ -289,7 +303,7 @@ export const api = {
       });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al activar invitación' };
+        throwApiError('Error al activar invitación', errData);
       }
       return await res.json();
     },
@@ -313,7 +327,7 @@ export const api = {
       });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al reenviar invitación' };
+        throwApiError('Error al reenviar invitación', errData);
       }
       return await res.json();
     },
@@ -343,7 +357,7 @@ export const api = {
       });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al crear invitación por grupo' };
+        throwApiError('Error al crear invitación por grupo', errData);
       }
       return await res.json();
     },
@@ -376,7 +390,7 @@ export const api = {
       });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al editar invitación por grupo' };
+        throwApiError('Error al editar invitación por grupo', errData);
       }
       return await res.json();
     },
@@ -403,7 +417,7 @@ export const api = {
       });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al aprobar invitación' };
+        throwApiError('Error al aprobar invitación', errData);
       }
       return await res.json();
     },
@@ -424,7 +438,7 @@ export const api = {
       });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al solicitar actualización' };
+        throwApiError('Error al solicitar actualización', errData);
       }
       return await res.json();
     },
@@ -457,7 +471,7 @@ export const api = {
       if (!res.ok) throw new Error('Token inválido o expirado');
       return await res.json();
     },
-    register: async (token: string, data: any) => {
+    register: async (token: string, data: unknown) => {
       const url = `${config.API_BASE_URL}/api/v1/invitation-groups/public/${token}/register`;
       const res = await fetch(url, {
         method: 'POST',
@@ -466,7 +480,7 @@ export const api = {
       });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al registrar invitación' };
+        throwApiError('Error al registrar invitación', errData);
       }
       return await res.json();
     },
@@ -485,7 +499,7 @@ export const api = {
       const res = await fetch(url, { method: 'POST', body: formData });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al subir archivo' };
+        throwApiError('Error al subir archivo', errData);
       }
       return await res.json();
     },
@@ -665,7 +679,7 @@ export const api = {
     },
     catalog: async () => {
       const [roles, permissions] = await Promise.all([api.rbac.roles(), api.rbac.permissions()]);
-      const roleDetails = await Promise.all((roles || []).map((r: any) => api.rbac.getRole(r.id)));
+      const roleDetails = await Promise.all((roles || []).map((r: { id: number }) => api.rbac.getRole(r.id)));
       return {
         roles: roleDetails,
         permissions,
@@ -687,7 +701,7 @@ export const api = {
       });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al actualizar configuración' };
+        throwApiError('Error al actualizar configuración', errData);
       }
       return await res.json();
     },
@@ -699,7 +713,7 @@ export const api = {
       });
       if (!res.ok) {
         const errData = await res.json();
-        throw { data: errData, message: 'Error al renderizar vista previa' };
+        throwApiError('Error al renderizar vista previa', errData);
       }
       return await res.json() as {
         original_template: string;

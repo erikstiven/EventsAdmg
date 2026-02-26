@@ -94,3 +94,25 @@ docker compose up -d --build
 ```
 
 Ultima actualizacion: 2026-02-23
+
+## CI/CD (GitHub Actions)
+
+Se agregaron workflows en `.github/workflows`:
+
+- `ci.yml`: validaciones en push/PR (`compileall`, `alembic upgrade head`, smoke tests backend, build frontend).
+- `deploy.yml`: despliegue a produccion por SSH, solo cuando CI de `main` termina OK o por disparo manual.
+
+Secrets requeridos para `deploy.yml` (en GitHub `Settings > Secrets and variables > Actions`):
+
+- `DEPLOY_HOST`: host/IP del servidor.
+- `DEPLOY_USER`: usuario SSH.
+- `DEPLOY_SSH_KEY`: llave privada SSH.
+- `DEPLOY_PATH`: ruta absoluta del repo en el servidor (ej. `/opt/EventsAdmg`).
+
+Secret opcional:
+
+- `APP_HEALTHCHECK_URL`: URL para verificacion post deploy (ej. `https://tu-dominio/health`).
+
+Recomendado:
+
+- Configurar `Environment` llamado `production` en GitHub con reglas de aprobacion.

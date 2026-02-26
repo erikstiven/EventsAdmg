@@ -13,6 +13,10 @@ from dependencies.auth import get_current_user
 from dependencies.permissions import require_any_permission
 from schemas.auth import UserResponse
 from services.events import EventsService
+from utils.http_errors import (
+    raise_bad_request_from_value_error,
+    raise_internal_server_error,
+)
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -140,8 +144,7 @@ async def query_eventss(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error querying eventss: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, "Error querying eventss", e)
 
 
 @router.get("/all", response_model=EventsListResponse)
@@ -187,8 +190,7 @@ async def query_eventss_all(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error querying eventss: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, "Error querying eventss", e)
 
 
 @router.get("/{id}", response_model=EventsResponse)
@@ -213,8 +215,7 @@ async def get_events(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching events {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, f"Error fetching events {id}", e)
 
 
 @router.post("", response_model=EventsResponse, status_code=201)
@@ -236,11 +237,9 @@ async def create_events(
         logger.info(f"Events created successfully with id: {result.id}")
         return result
     except ValueError as e:
-        logger.error(f"Validation error creating events: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise_bad_request_from_value_error(e)
     except Exception as e:
-        logger.error(f"Error creating events: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, "Error creating events", e)
 
 
 @router.post("/batch", response_model=List[EventsResponse], status_code=201)
@@ -266,8 +265,7 @@ async def create_eventss_batch(
         return results
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
+        raise_internal_server_error(logger, "Error in batch create", e)
 
 
 @router.put("/batch", response_model=List[EventsResponse])
@@ -295,8 +293,7 @@ async def update_eventss_batch(
         return results
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
+        raise_internal_server_error(logger, "Error in batch update", e)
 
 
 @router.put("/{id}", response_model=EventsResponse)
@@ -324,11 +321,9 @@ async def update_events(
     except HTTPException:
         raise
     except ValueError as e:
-        logger.error(f"Validation error updating events {id}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise_bad_request_from_value_error(e)
     except Exception as e:
-        logger.error(f"Error updating events {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, f"Error updating events {id}", e)
 
 
 @router.delete("/batch")
@@ -354,8 +349,7 @@ async def delete_eventss_batch(
         return {"message": f"Successfully deleted {deleted_count} eventss", "deleted_count": deleted_count}
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
+        raise_internal_server_error(logger, "Error in batch delete", e)
 
 
 @router.delete("/{id}")
@@ -380,5 +374,4 @@ async def delete_events(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting events {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, f"Error deleting events {id}", e)

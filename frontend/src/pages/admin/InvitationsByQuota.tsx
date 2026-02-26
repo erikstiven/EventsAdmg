@@ -30,7 +30,7 @@ import {
 } from '@/components/ui/dialog';
 import ActionIconButton from '@/components/ActionIconButton';
 import InvitationGroupStatusBadge from '@/components/InvitationGroupStatusBadge';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { getInvitationGroupStatusMeta } from '@/lib/invitationGroupStatus';
 import { useAuth } from '@/contexts/AuthContextSimple';
 import { useToast } from '@/hooks/use-toast';
@@ -63,6 +63,52 @@ type QuotaInvitation = {
   titularDocUrl?: string | null;
 };
 
+type Companion = { name: string; cedula: string; email: string; telefono: string; codigo: string };
+
+type ApiDetailItem = { msg?: string };
+
+type InvitationGroupCompanionApi = Companion & {
+  selfie_url?: string | null;
+  doc_url?: string | null;
+};
+
+type InvitationGroupItemApi = {
+  id: number;
+  event_id: number;
+  titular_name: string;
+  group_size: number;
+  status: string;
+  link: string;
+  email_sent_at?: string | null;
+  companions?: InvitationGroupCompanionApi[];
+  titular_identification?: string;
+  email?: string;
+  phone?: string;
+  fingerprint_code?: string;
+  titular_selfie_url?: string | null;
+  titular_doc_url?: string | null;
+};
+
+type InvitationGroupListResponse = { items?: InvitationGroupItemApi[] };
+
+const extractErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof ApiError) {
+    const detail = (error.data as { detail?: unknown } | undefined)?.detail;
+    if (Array.isArray(detail)) {
+      const messages = detail
+        .map((d) => (typeof d === 'object' && d ? (d as ApiDetailItem).msg : undefined))
+        .filter(Boolean);
+      if (messages.length > 0) {
+        return messages.join('. ');
+      }
+    }
+    if (typeof detail === 'string' && detail.trim()) return detail;
+    if (error.message) return error.message;
+  }
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+};
+
 export default function InvitationsByQuota() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -91,9 +137,7 @@ export default function InvitationsByQuota() {
     intransferible: true,
   });
   const [createdLink, setCreatedLink] = useState('');
-  const [companions, setCompanions] = useState<
-    { name: string; cedula: string; email: string; telefono: string; codigo: string }[]
-  >([]);
+  const [companions, setCompanions] = useState<Companion[]>([]);
 
   const resetInvitationForm = () => {
     setActiveStep(0);
@@ -178,12 +222,12 @@ export default function InvitationsByQuota() {
 
   const fetchInvitations = useCallback(async (options?: { silent?: boolean }) => {
     try {
-      const response = await api.invitationGroups.list({ limit: 2000 });
-      const mapped = (response.items || []).map((item: any) => {
+      const response = (await api.invitationGroups.list({ limit: 2000 })) as InvitationGroupListResponse;
+      const mapped = (response.items || []).map((item) => {
         const companions = Array.isArray(item.companions) ? item.companions : [];
         const titularComplete = Boolean(item.titular_selfie_url && item.titular_doc_url);
         const companionsComplete = companions.filter(
-          (c: any) => Boolean(c?.selfie_url && c?.doc_url)
+          (c) => Boolean(c?.selfie_url && c?.doc_url)
         ).length;
         const cupoUsado = (titularComplete ? 1 : 0) + companionsComplete;
         return {
@@ -312,11 +356,8 @@ export default function InvitationsByQuota() {
       } else {
         await createInvitation();
       }
-    } catch (error: any) {
-      const message =
-        error?.data?.detail ||
-        error?.message ||
-        'No se pudo crear la invitación por grupo';
+    } catch (error: unknown) {
+      const message = extractErrorMessage(error, 'No se pudo crear la invitación por grupo');
       toast({
         title: 'Error',
         description: message,
@@ -371,11 +412,8 @@ export default function InvitationsByQuota() {
       setShowSuccess(true);
       setShowForm(false);
       resetInvitationForm();
-    } catch (error: any) {
-      const message =
-        error?.data?.detail ||
-        error?.message ||
-        'No se pudo crear la invitación por grupo';
+    } catch (error: unknown) {
+      const message = extractErrorMessage(error, 'No se pudo crear la invitación por grupo');
       toast({
         title: 'Error',
         description: message,
@@ -410,11 +448,8 @@ export default function InvitationsByQuota() {
       });
       setShowForm(false);
       resetInvitationForm();
-    } catch (error: any) {
-      const message =
-        error?.data?.detail ||
-        error?.message ||
-        'No se pudo actualizar la invitación por grupo';
+    } catch (error: unknown) {
+      const message = extractErrorMessage(error, 'No se pudo actualizar la invitación por grupo');
       toast({
         title: 'Error',
         description: message,
@@ -507,11 +542,8 @@ export default function InvitationsByQuota() {
         title: 'Datos cargados',
         description: 'Se reutilizaron los datos del invitado.',
       });
-    } catch (error: any) {
-      const detail = error?.data?.detail;
-      const message = Array.isArray(detail)
-        ? detail.map((d: any) => d?.msg).filter(Boolean).join('. ')
-        : detail || 'No se pudo buscar el invitado.';
+    } catch (error: unknown) {
+      const message = extractErrorMessage(error, 'No se pudo buscar el invitado.');
       toast({
         title: 'Error',
         description: message,
@@ -580,11 +612,8 @@ export default function InvitationsByQuota() {
         title: 'Datos cargados',
         description: 'Se reutilizaron los datos del acompañante.',
       });
-    } catch (error: any) {
-      const detail = error?.data?.detail;
-      const message = Array.isArray(detail)
-        ? detail.map((d: any) => d?.msg).filter(Boolean).join('. ')
-        : detail || 'No se pudo buscar el acompañante.';
+    } catch (error: unknown) {
+      const message = extractErrorMessage(error, 'No se pudo buscar el acompañante.');
       toast({
         title: 'Error',
         description: message,
@@ -698,10 +727,10 @@ export default function InvitationsByQuota() {
       });
       setReopenOpen(false);
       setReopenTarget(null);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: 'Error',
-        description: error?.data?.detail || 'No se pudo habilitar la actualización.',
+        description: extractErrorMessage(error, 'No se pudo habilitar la actualización.'),
         variant: 'destructive',
       });
     } finally {
@@ -923,10 +952,10 @@ export default function InvitationsByQuota() {
                                 title: inv.sent ? 'Reenviado' : 'Enviado',
                                 description: 'Correo enviado correctamente.',
                               });
-                            } catch (error: any) {
+                            } catch (error: unknown) {
                               toast({
                                 title: 'Error',
-                                description: error?.data?.detail || 'No se pudo enviar el correo.',
+                                description: extractErrorMessage(error, 'No se pudo enviar el correo.'),
                                 variant: 'destructive',
                               });
                             }
@@ -1355,7 +1384,7 @@ export default function InvitationsByQuota() {
               detailInvitation.titularSelfieUrl,
               detailInvitation.titularDocUrl
             );
-            const companionsComplete = companionsList.filter((c: any) =>
+            const companionsComplete = companionsList.filter((c) =>
               isPersonComplete(c?.selfie_url, c?.doc_url)
             ).length;
             const detailCupoUsed = (titularComplete ? 1 : 0) + companionsComplete;
@@ -1368,7 +1397,7 @@ export default function InvitationsByQuota() {
                 selfieUrl: detailInvitation.titularSelfieUrl,
                 docUrl: detailInvitation.titularDocUrl,
               },
-              ...companionsList.map((c: any) => ({
+              ...companionsList.map((c) => ({
                 name: c.name || 'Acompañante',
                 role: 'Acompañante',
                 cedula: c.cedula || '----',

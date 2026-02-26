@@ -14,6 +14,10 @@ from services.storage import StorageService
 from dependencies.auth import get_current_user
 from dependencies.permissions import require_any_permission
 from schemas.auth import UserResponse
+from utils.http_errors import (
+    raise_bad_request_from_value_error,
+    raise_internal_server_error,
+)
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -143,8 +147,7 @@ async def query_attendeess(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error querying attendeess: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, "Error querying attendeess", e)
 
 
 @router.get("/all", response_model=AttendeesListResponse)
@@ -182,8 +185,7 @@ async def query_attendeess_all(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error querying attendeess: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, "Error querying attendeess", e)
 
 
 @router.get("/lookup", response_model=AttendeesLookupResponse)
@@ -199,9 +201,9 @@ async def lookup_attendee_by_cedula(
         result = await service.get_by_field("identification", cedula)
         return {"item": result}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise_bad_request_from_value_error(e)
     except Exception as e:
-        logger.error(f"Error lookup attendees by cedula: {str(e)}", exc_info=True)
+        logger.error("Error lookup attendees by cedula: %s", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail="No se pudo buscar la cédula")
 
 
@@ -227,8 +229,7 @@ async def get_attendees(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching attendees {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, f"Error fetching attendees {id}", e)
 
 
 @router.post("", response_model=AttendeesResponse, status_code=201)
@@ -271,11 +272,9 @@ async def create_attendees(
         logger.info(f"Attendees created successfully with id: {result.id}")
         return result
     except ValueError as e:
-        logger.error(f"Validation error creating attendees: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise_bad_request_from_value_error(e)
     except Exception as e:
-        logger.error(f"Error creating attendees: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, "Error creating attendees", e)
 
 
 
@@ -302,8 +301,7 @@ async def create_attendeess_batch(
         return results
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
+        raise_internal_server_error(logger, "Error in batch create", e)
 
 
 @router.put("/batch", response_model=List[AttendeesResponse])
@@ -331,8 +329,7 @@ async def update_attendeess_batch(
         return results
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
+        raise_internal_server_error(logger, "Error in batch update", e)
 
 
 @router.put("/{id}", response_model=AttendeesResponse)
@@ -379,11 +376,9 @@ async def update_attendees(
     except HTTPException:
         raise
     except ValueError as e:
-        logger.error(f"Validation error updating attendees {id}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise_bad_request_from_value_error(e)
     except Exception as e:
-        logger.error(f"Error updating attendees {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, f"Error updating attendees {id}", e)
 
 
 @router.delete("/batch")
@@ -409,8 +404,7 @@ async def delete_attendeess_batch(
         return {"message": f"Successfully deleted {deleted_count} attendeess", "deleted_count": deleted_count}
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
+        raise_internal_server_error(logger, "Error in batch delete", e)
 
 
 @router.delete("/{id}")
@@ -435,24 +429,4 @@ async def delete_attendees(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting attendees {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-
-@router.get("/lookup", response_model=AttendeesLookupResponse)
-async def lookup_attendee_by_cedula(
-    cedula: str = Query(..., description="Cédula a buscar"),
-    current_user: UserResponse = Depends(get_current_user),
-    _perm: UserResponse = Depends(require_any_permission("attendees.read")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Lookup attendee by identification (cedula)"""
-    service = AttendeesService(db)
-    try:
-        result = await service.get_by_field("identification", cedula)
-        return {"item": result}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error lookup attendees by cedula: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise_internal_server_error(logger, f"Error deleting attendees {id}", e)
